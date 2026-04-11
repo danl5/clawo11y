@@ -79,15 +79,20 @@ If you are running the "Overlord Architecture" where your central O11y Server is
 
 #### 1. The Server & Web Frontend
 The FastAPI server is designed to serve the built React files statically. You don't need a separate Node.js server.
+
+If your code is located at `/opt/clawo11y`, follow these steps:
+
 ```bash
 # 1. Build the frontend
-cd web && npm install && npm run build
+cd /opt/clawo11y/web && npm install && npm run build
 
-# 2. Setup Python env
-cd .. && python3 -m venv .venv && source .venv/bin/activate
+# 2. Setup Python env (requires python3-venv)
+cd /opt/clawo11y
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 
-# 3. Setup systemd (Edit paths in scripts/o11y-server.service if needed)
+# 3. Setup systemd (If your path is not /opt/clawo11y, edit the paths in scripts/o11y-server.service)
 sudo cp scripts/o11y-server.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now o11y-server
