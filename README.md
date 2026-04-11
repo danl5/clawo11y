@@ -1,4 +1,4 @@
-# 👁️‍🗨️ OpenClaw O11y (Observability)
+# <img src="web/public/favicon.svg" width="32" height="32" alt="OpenClaw O11y Logo" style="vertical-align: middle;"> OpenClaw O11y (Observability)
 
 Welcome to **OpenClaw O11y** — the telemetry dashboard for your OpenClaw AI Agents. 
 
@@ -108,4 +108,4 @@ go run .
 - **Cron Runs**: The Go Agent parses the latest 5,000 runs per job directly from `.jsonl` files on startup, ensuring you never lose context after a reboot.
 
 ---
-*Happy observing. May your cache hit rates be high and your hallucinations be low.* 🦞
+*Happy observing. May your cache hit rates be high and your hallucinations be low.* <img src="web/public/favicon.svg" width="16" height="16" alt="O11y" style="vertical-align: middle;">
