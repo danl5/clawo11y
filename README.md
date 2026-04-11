@@ -13,7 +13,7 @@ Stop SSH-ing into your VMs just to `tail -f` a `.jsonl` file. Stop guessing how 
 - 🗂️ **Multi-Agent Workspace Explorer**: Dynamic `.md` and `.json` file cards across all your `workspace*` directories.
 - ⏱️ **Cron Job Telemetry**: Deep execution history (up to 5,000 runs) with accordion-style expandable summaries.
 - 📊 **Live System & Log Tailing**: 60-second hardware metrics (CPU/RAM/Disk) and streaming JSON log parser.
-- 🌍 **Distributed Monitoring**: Drop a lightweight Go binary on any remote node to instantly stream telemetry to your central dashboard.ß
+- 🌍 **Distributed Monitoring**: Drop a lightweight Go binary on any remote node to instantly stream telemetry to your central dashboard.
 
 ---
 
