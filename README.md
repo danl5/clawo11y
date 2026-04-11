@@ -72,18 +72,44 @@ Press `Ctrl+C` to gracefully shut down both the server and the agent.
 
 ---
 
-### 3️⃣ Distributed Monitoring (Production)
-*Monitor remote OpenClaw workers without installing Docker on every node.*
+### 3️⃣ Distributed Monitoring (Bare-Metal Production)
+*For a robust, daemonized deployment across multiple nodes without Docker.*
 
-If you are running the "Overlord Architecture" where your central O11y Server is running elsewhere, you only need to deploy the lightweight Go Agent on your worker VMs.
+If you are running the "Overlord Architecture" where your central O11y Server is running elsewhere, you can deploy the Server and lightweight Go Agent as native Systemd services.
 
-1. **Deploy the Server:** Run the Docker Compose (Step 1) on your central monitoring server and expose port `8000`.
-2. **Deploy the Agent:** Head to the [Releases Page](https://github.com/danl5/clawo11y/releases) and download the pre-compiled binary for your worker's OS/Arch.
-3. **Run the Agent:** Point the agent to your central server and specify the monitored directory (optional, defaults to `~/.openclaw`):
+#### 1. The Server & Web Frontend
+The FastAPI server is designed to serve the built React files statically. You don't need a separate Node.js server.
 ```bash
-O11Y_SERVER_URL=http://<YOUR_CENTRAL_SERVER_IP>:8000 OPENCLAW_BASE_DIR=/var/lib/my-bot ./clawo11y-agent-linux-amd64
+# 1. Build the frontend
+cd web && npm install && npm run build
+
+# 2. Setup Python env
+cd .. && python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+# 3. Setup systemd (Edit paths in scripts/o11y-server.service if needed)
+sudo cp scripts/o11y-server.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now o11y-server
 ```
-*Pro-tip: Run this binary via `systemd` or `pm2` so it stays alive in the background.*
+
+#### 2. The Go Agent (On Worker Nodes)
+You only need to deploy the Go Agent on your remote OpenClaw workers.
+
+1. Head to the [Releases Page](https://github.com/danl5/clawo11y/releases) and download the pre-compiled binary for your worker's OS/Arch.
+2. Configure and enable the Systemd service:
+```bash
+# 1. Edit the environment variables in the service file
+nano scripts/o11y-agent.service
+# Set: Environment="O11Y_SERVER_URL=http://<YOUR_CENTRAL_SERVER_IP>:8000"
+
+# 2. Setup systemd
+sudo cp scripts/o11y-agent.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now o11y-agent
+```
+
+> *Pro-tip: Check logs anytime using: `journalctl -fu o11y-server` or `journalctl -fu o11y-agent`*
 
 ---
 

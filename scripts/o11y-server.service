@@ -1,0 +1,25 @@
+[Unit]
+Description=OpenClaw O11y Server
+After=network.target
+
+[Service]
+User=root
+# Change to the path where you cloned the repository
+WorkingDirectory=/opt/clawo11y
+
+# Use the Python virtual environment to run the server
+ExecStart=/opt/clawo11y/.venv/bin/python -m core.server.main
+
+# Environment variables
+Environment="PYTHONPATH=/opt/clawo11y"
+Environment="O11Y_DB_URL=sqlite:////opt/clawo11y/data/o11y_server.db"
+
+Restart=always
+RestartSec=5
+# Limit logs
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=clawo11y-server
+
+[Install]
+WantedBy=multi-user.target

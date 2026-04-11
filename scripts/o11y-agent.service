@@ -1,0 +1,25 @@
+[Unit]
+Description=OpenClaw O11y Agent
+After=network.target
+
+[Service]
+User=root
+# Change this to where you downloaded the clawo11y-agent binary
+WorkingDirectory=/opt/clawo11y
+
+# Start the Go agent
+ExecStart=/opt/clawo11y/clawo11y-agent-linux-amd64
+
+# Environment Configuration
+Environment="O11Y_SERVER_URL=http://127.0.0.1:8000"
+Environment="OPENCLAW_BASE_DIR=/root/.openclaw"
+
+Restart=always
+RestartSec=5
+# Limit logs
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=clawo11y-agent
+
+[Install]
+WantedBy=multi-user.target
