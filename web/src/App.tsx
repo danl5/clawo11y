@@ -335,6 +335,11 @@ function OverviewTab({ messages }: any) {
                   <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.25)' }}>
                     {m.session_id?.slice(0, 8)}...
                   </span>
+                  {m.tool_name && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-md border border-yellow-500/20" style={{ background: 'rgba(250,204,21,0.1)', color: '#facc15' }}>
+                      {m.tool_name}
+                    </span>
+                  )}
                   {m.provider && (
                     <span className="text-[9px] px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(167,139,250,0.1)', color: 'rgba(167,139,250,0.5)' }}>
                       {m.provider}
@@ -371,49 +376,95 @@ function TokensTab({ messages }: any) {
       }));
   }, [messages]);
 
+  const skillStats = useMemo(() => {
+    const stats: Record<string, { calls: number, cost: number, input: number, output: number }> = {};
+    messages.forEach((m: WsMessage) => {
+      if ((m.input_tokens || 0) > 0 || (m.output_tokens || 0) > 0) {
+        const skill = m.tool_name || '— (No Skill)';
+        if (!stats[skill]) stats[skill] = { calls: 0, cost: 0, input: 0, output: 0 };
+        stats[skill].calls += 1;
+        stats[skill].cost += (m.cost_usd || 0);
+        stats[skill].input += (m.input_tokens || 0);
+        stats[skill].output += (m.output_tokens || 0);
+      }
+    });
+    return Object.entries(stats)
+      .map(([name, s]) => ({ name, ...s }))
+      .sort((a, b) => b.cost - a.cost);
+  }, [messages]);
+
   if (chartData.length === 0) return <EmptyState icon="⚡" title="No token data yet" subtitle="Token usage will appear here as sessions are tracked" />;
 
   return (
     <div className="space-y-5 animate-fade-up">
-      <div className="glass-card p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-medium" style={{ color: 'rgba(255,255,255,0.6)' }}>Token Volume</h3>
-          <div className="flex gap-3 text-xs">
-            <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm" style={{ background: '#3b82f6', boxShadow: '0 0 4px #3b82f6' }} /><span style={{ color: 'rgba(255,255,255,0.35)' }}>Input</span></div>
-            <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm" style={{ background: '#34d399', boxShadow: '0 0 4px #34d399' }} /><span style={{ color: 'rgba(255,255,255,0.35)' }}>Output</span></div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <div className="lg:col-span-2 space-y-5">
+          <div className="glass-card p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium" style={{ color: 'rgba(255,255,255,0.6)' }}>Token Volume</h3>
+              <div className="flex gap-3 text-xs">
+                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm" style={{ background: '#3b82f6', boxShadow: '0 0 4px #3b82f6' }} /><span style={{ color: 'rgba(255,255,255,0.35)' }}>Input</span></div>
+                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm" style={{ background: '#34d399', boxShadow: '0 0 4px #34d399' }} /><span style={{ color: 'rgba(255,255,255,0.35)' }}>Output</span></div>
+              </div>
+            </div>
+            <ResponsiveContainer width="100%" height={180}>
+              <BarChart data={chartData} barCategoryGap="25%">
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                <XAxis dataKey="ts" tick={{ fontSize: 9, fill: 'rgba(255,255,255,0.25)' }} />
+                <YAxis tick={{ fontSize: 9, fill: 'rgba(255,255,255,0.25)' }} />
+                <Tooltip contentStyle={{ background: '#0a0f1e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11, color: 'white' }} />
+                <Bar dataKey="input" fill="#3b82f6" stackId="a" radius={[3, 3, 0, 0]} isAnimationActive={false} />
+                <Bar dataKey="output" fill="#34d399" stackId="a" radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="glass-card p-5">
+            <h3 className="text-sm font-medium mb-4" style={{ color: 'rgba(255,255,255,0.6)' }}>
+              Cost Trend <span className="text-[10px] font-normal" style={{ color: 'rgba(255,255,255,0.2)' }}>(USD × 1000)</span>
+            </h3>
+            <ResponsiveContainer width="100%" height={110}>
+              <AreaChart data={chartData}>
+                <defs>
+                  <linearGradient id="costGrad2" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#fb923c" stopOpacity={0.35} />
+                    <stop offset="95%" stopColor="#fb923c" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                <XAxis dataKey="ts" tick={{ fontSize: 9, fill: 'rgba(255,255,255,0.25)' }} />
+                <YAxis tick={{ fontSize: 9, fill: 'rgba(255,255,255,0.25)' }} />
+                <Tooltip contentStyle={{ background: '#0a0f1e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11, color: 'white' }} />
+                <Area type="monotone" dataKey="cost" stroke="#fb923c" fill="url(#costGrad2)" strokeWidth={2} strokeOpacity={0.9} isAnimationActive={false} />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
         </div>
-        <ResponsiveContainer width="100%" height={180}>
-          <BarChart data={chartData} barCategoryGap="25%">
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-            <XAxis dataKey="ts" tick={{ fontSize: 9, fill: 'rgba(255,255,255,0.25)' }} />
-            <YAxis tick={{ fontSize: 9, fill: 'rgba(255,255,255,0.25)' }} />
-            <Tooltip contentStyle={{ background: '#0a0f1e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11, color: 'white' }} />
-            <Bar dataKey="input" fill="#3b82f6" stackId="a" radius={[3, 3, 0, 0]} isAnimationActive={false} />
-            <Bar dataKey="output" fill="#34d399" stackId="a" radius={[3, 3, 0, 0]} isAnimationActive={false} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
 
-      <div className="glass-card p-5">
-        <h3 className="text-sm font-medium mb-4" style={{ color: 'rgba(255,255,255,0.6)' }}>
-          Cost Trend <span className="text-[10px] font-normal" style={{ color: 'rgba(255,255,255,0.2)' }}>(USD × 1000)</span>
-        </h3>
-        <ResponsiveContainer width="100%" height={110}>
-          <AreaChart data={chartData}>
-            <defs>
-              <linearGradient id="costGrad2" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#fb923c" stopOpacity={0.35} />
-                <stop offset="95%" stopColor="#fb923c" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-            <XAxis dataKey="ts" tick={{ fontSize: 9, fill: 'rgba(255,255,255,0.25)' }} />
-            <YAxis tick={{ fontSize: 9, fill: 'rgba(255,255,255,0.25)' }} />
-            <Tooltip contentStyle={{ background: '#0a0f1e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11, color: 'white' }} />
-            <Area type="monotone" dataKey="cost" stroke="#fb923c" fill="url(#costGrad2)" strokeWidth={2} strokeOpacity={0.9} isAnimationActive={false} />
-          </AreaChart>
-        </ResponsiveContainer>
+        <div className="glass-card p-5 overflow-y-auto max-h-[415px] scrollbar-none">
+          <h3 className="text-sm font-medium mb-4" style={{ color: 'rgba(255,255,255,0.6)' }}>Cost Breakdown by Skill</h3>
+          <div className="space-y-3">
+            {skillStats.map((skill, i) => (
+              <div key={i} className="p-3 rounded-xl bg-white/[0.02] border border-white/5">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-xs font-bold" style={{ color: skill.name === '— (No Skill)' ? 'rgba(255,255,255,0.3)' : '#facc15' }}>
+                    {skill.name}
+                  </div>
+                  <div className="text-xs font-mono" style={{ color: '#fb923c' }}>
+                    ${skill.cost.toFixed(6)}
+                  </div>
+                </div>
+                <div className="flex items-center justify-between text-[10px] font-mono" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                  <span>{skill.calls} invocations</span>
+                  <div className="flex gap-2">
+                    <span style={{ color: '#60a5fa' }}>in: {skill.input.toLocaleString()}</span>
+                    <span style={{ color: '#34d399' }}>out: {skill.output.toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -741,6 +792,11 @@ function TimelineNode({ ev, first, last, filterType }: { ev: TimelineEvent; firs
 
         {(type === 'token_usage' || ev.input_tokens > 0 || ev.output_tokens > 0) && (
           <div className="flex flex-wrap gap-4 mt-2 text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>
+            {ev.tool_name && (
+              <span className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-bold border border-yellow-500/30" style={{ color: '#facc15', background: 'rgba(250,204,21,0.1)' }}>
+                {ev.tool_name}
+              </span>
+            )}
             <span>In: <strong style={{ color: '#60a5fa' }}>{(ev.input_tokens || 0).toLocaleString()}</strong></span>
             <span>Out: <strong style={{ color: '#34d399' }}>{(ev.output_tokens || 0).toLocaleString()}</strong></span>
             {ev.cache_read_tokens > 0 && <span>CacheR: <strong style={{ color: '#a78bfa' }}>{(ev.cache_read_tokens).toLocaleString()}</strong></span>}
@@ -1051,25 +1107,21 @@ function LogsTab({ messages }: any) {
   const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
 
   const gatewayLogs = messages.filter((m: WsMessage) => m.type === 'gateway_log_event');
-  const agentEvents = messages.filter((m: WsMessage) =>
-    m.type === 'agent_event' && (m.tool_name || m.event_type === 'thinking' || m.event_type === 'token_usage')
-  ).slice(0, 40);
 
-  if (gatewayLogs.length === 0 && agentEvents.length === 0) {
-    return <EmptyState icon="📋" title="No logs yet" subtitle="Gateway and agent events will stream here" />;
+  if (gatewayLogs.length === 0) {
+    return <EmptyState icon="📋" title="No logs yet" subtitle="Gateway and system logs will stream here" />;
   }
 
   const LEVEL_COLORS: Record<string, string> = { error: '#f87171', warn: '#fbbf24', info: '#60a5fa' };
 
   return (
     <div className="space-y-1.5 animate-fade-up">
-      {[...gatewayLogs, ...agentEvents]
+      {[...gatewayLogs]
         .sort((a: WsMessage, b: WsMessage) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
         .slice(0, 60)
         .map((ev: WsMessage, i: number) => {
-          const isGateway = ev.type === 'gateway_log_event';
           let level = (ev as any).level || 'info';
-          if (isGateway && ev.lines && ev.lines.length > 0 && typeof ev.lines[0] === 'object') {
+          if (ev.lines && ev.lines.length > 0 && typeof ev.lines[0] === 'object') {
             level = ev.lines[0].level || ev.lines[0].status || 'info';
           }
           const isExpanded = expandedLogId === i;
@@ -1084,16 +1136,14 @@ function LogsTab({ messages }: any) {
                   {level}
                 </span>
                 <div className="flex-1 min-w-0">
-                  {isGateway && <div className="text-xs truncate font-mono" style={{ color: 'rgba(255,255,255,0.4)' }}>{ev.log_path?.split('/').pop()}</div>}
-                  {!isGateway && ev.tool_name && <span className="text-xs font-mono" style={{ color: '#fb923c' }}>{ev.tool_name}</span>}
-                  {!isGateway && !ev.tool_name && ev.event_type && <span className="text-xs" style={{ color: 'rgba(255,255,255,0.25)' }}>{ev.event_type}</span>}
+                  <div className="text-xs truncate font-mono" style={{ color: 'rgba(255,255,255,0.4)' }}>{ev.log_path?.split('/').pop() || 'system.log'}</div>
                 </div>
                 <span className="text-[10px] shrink-0" style={{ color: 'rgba(255,255,255,0.15)' }}>
                   {ev.timestamp ? fmtMs(new Date(ev.timestamp).getTime()) : ''}
                 </span>
               </div>
               
-              {isExpanded && isGateway && ev.lines && ev.lines.length > 0 && (
+              {isExpanded && ev.lines && ev.lines.length > 0 && (
                 <div className="mt-2 p-3 rounded-lg bg-black/40 border border-white/5 overflow-x-auto" onClick={(e) => e.stopPropagation()}>
                   <pre className="text-[10px] font-mono text-gray-300 whitespace-pre-wrap leading-relaxed">
                     {ev.lines.map((l: any) => typeof l === 'string' ? l : JSON.stringify(l, null, 2)).join('\n')}

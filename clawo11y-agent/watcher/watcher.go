@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/danl5/clawo11y/clawo11y-agent/schemas"
+	"github.com/fsnotify/fsnotify"
 )
 
 type SessionWatcher struct {
@@ -198,6 +198,25 @@ func (w *SessionWatcher) enrichWithTool(raw map[string]interface{}, payload *sch
 	}
 	if tool, ok := raw["tool"].(string); ok {
 		payload.ToolName = tool
+	}
+
+	// Extract skill/tool calls embedded in the message content
+	if msgObj, ok := raw["message"].(map[string]interface{}); ok {
+		if contentArr, ok := msgObj["content"].([]interface{}); ok {
+			var tools []string
+			for _, item := range contentArr {
+				if obj, ok := item.(map[string]interface{}); ok {
+					if t, ok := obj["type"].(string); ok && t == "toolCall" {
+						if n, ok := obj["name"].(string); ok {
+							tools = append(tools, n)
+						}
+					}
+				}
+			}
+			if len(tools) > 0 {
+				payload.ToolName = strings.Join(tools, ", ")
+			}
+		}
 	}
 }
 
