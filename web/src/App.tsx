@@ -281,7 +281,7 @@ function OverviewTab({ messages }: any) {
         ))}
       </div>
 
-      {healthSnapshots.length > 1 && (
+      {healthSnapshots.length > 0 && (
         <div className="glass-card p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-medium" style={{ color: 'rgba(255,255,255,0.6)' }}>

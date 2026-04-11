@@ -4,6 +4,8 @@ Welcome to **OpenClaw O11y** — the telemetry dashboard for your OpenClaw AI Ag
 
 Stop SSH-ing into your VMs just to `tail -f` a `.jsonl` file. Stop guessing how many tokens your latest prompt burned. OpenClaw O11y gives you a real-time, cyberpunk-styled window directly into the "brains" of your AI workforce. 
 
+![OpenClaw O11y Dashboard Overview](web/public/overview.png)
+
 ---
 
 ## ✨ Features

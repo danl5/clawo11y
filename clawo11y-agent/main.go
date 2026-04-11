@@ -108,6 +108,17 @@ func main() {
 	go func() {
 		ticker := time.NewTicker(60 * time.Second)
 		defer ticker.Stop()
+
+		// Send an initial metric immediately on boot
+		initialMetrics := sysMonitor.GetMetrics()
+
+		// Fake a point 60s ago to allow React Recharts to draw a line immediately
+		pastMetrics := initialMetrics
+		pastMetrics.Timestamp = time.Now().Add(-60 * time.Second).UTC()
+		metricsChan <- pastMetrics
+
+		metricsChan <- initialMetrics
+
 		for {
 			<-ticker.C
 			metrics := sysMonitor.GetMetrics()
