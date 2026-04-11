@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # The Central Brain & UI
   o11y-server:
