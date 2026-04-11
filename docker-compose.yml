@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  # The Central Brain & UI
+  o11y-server:
+    # If you don't want to build locally, you can use the pre-built image:
+    image: ghcr.io/danl5/clawo11y-server:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: openclaw-o11y-server
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount a local 'data' directory to persist the SQLite database
+      - ./data:/app/data
+    restart: unless-stopped
+
+  # The Telemetry Probe
+  o11y-agent:
+    image: ghcr.io/danl5/clawo11y-agent:latest
+    build:
+      context: ./clawo11y-agent
+      dockerfile: Dockerfile
+    container_name: openclaw-o11y-agent
+    environment:
+      # Point the agent to the internal Docker network URL of the server
+      - O11Y_SERVER_URL=http://o11y-server:8000
+    volumes:
+      # IMPORTANT: Mount your host's OpenClaw directory into the agent container
+      # Change ~/.openclaw to your actual host path if it's different
+      - ~/.openclaw:/root/.openclaw:ro
+    depends_on:
+      - o11y-server
+    restart: unless-stopped
