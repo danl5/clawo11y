@@ -20,16 +20,22 @@ const (
 )
 
 func detectOpenClawDirs() (agentsBaseDir, cronPath, workspaceBaseDir, gatewayLogDir string) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", "", "", ""
+	// Let user override via environment variable
+	baseDir := os.Getenv("OPENCLAW_BASE_DIR")
+	
+	if baseDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", "", "", ""
+		}
+		baseDir = filepath.Join(home, ".openclaw")
 	}
-	baseDir := filepath.Join(home, ".openclaw")
 
 	agentsBaseDir = filepath.Join(baseDir, "agents")
 	cronPath = filepath.Join(baseDir, "cron/jobs.json")
 	gatewayLogDir = filepath.Join(baseDir, "logs")
 
+	// Fallback for gateway logs if the directory doesn't exist in the baseDir
 	if _, err := os.Stat(filepath.Join(baseDir, "logs")); os.IsNotExist(err) {
 		if info, err := os.Stat("/tmp/moltbot"); err == nil && info.IsDir() {
 			gatewayLogDir = "/tmp/moltbot"

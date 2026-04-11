@@ -24,9 +24,13 @@ services:
     environment:
       # Point the agent to the internal Docker network URL of the server
       - O11Y_SERVER_URL=http://o11y-server:8000
+      # (Optional) Override the default monitored directory. 
+      # The path inside the container where the agent looks for data:
+      - OPENCLAW_BASE_DIR=/root/.openclaw
     volumes:
-      # IMPORTANT: Mount your host's OpenClaw directory into the agent container
-      # Change ~/.openclaw to your actual host path if it's different
+      # IMPORTANT: Mount your host's OpenClaw directory into the agent container.
+      # If your data is somewhere else (e.g., /var/lib/my-bot), change the LEFT side:
+      # - /var/lib/my-bot:/root/.openclaw:ro
       - ~/.openclaw:/root/.openclaw:ro
     depends_on:
       - o11y-server

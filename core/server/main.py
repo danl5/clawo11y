@@ -2,8 +2,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
-from core.server.database import engine, Base
+from core.server.database import engine, Base, SessionLocal
 from core.server.models import Node, SystemMetric, AgentEvent, WorkspaceEvent, CronEvent, SessionsEvent, GatewayLogEvent, HealthHistoryEvent
+import asyncio
+from datetime import datetime, timedelta, timezone
+import logging
+
+logger = logging.getLogger(__name__)
 
 Base.metadata.create_all(bind=engine)
 
@@ -12,6 +17,43 @@ app = FastAPI(
     description="Centralized observability server for OpenClaw nodes.",
     version="0.1.0",
 )
+
+# --- Data Retention Cleanup Task ---
+async def cleanup_old_data():
+    """Background task to delete data older than 7 days to prevent SQLite from growing infinitely."""
+    while True:
+        try:
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=7)
+            db = SessionLocal()
+            try:
+                # Clean up various event tables
+                deleted_metrics = db.query(SystemMetric).filter(SystemMetric.timestamp < cutoff_date).delete()
+                deleted_agents = db.query(AgentEvent).filter(AgentEvent.timestamp < cutoff_date).delete()
+                deleted_workspaces = db.query(WorkspaceEvent).filter(WorkspaceEvent.timestamp < cutoff_date).delete()
+                deleted_crons = db.query(CronEvent).filter(CronEvent.timestamp < cutoff_date).delete()
+                deleted_sessions = db.query(SessionsEvent).filter(SessionsEvent.timestamp < cutoff_date).delete()
+                deleted_gateways = db.query(GatewayLogEvent).filter(GatewayLogEvent.timestamp < cutoff_date).delete()
+                deleted_health = db.query(HealthHistoryEvent).filter(HealthHistoryEvent.timestamp < cutoff_date).delete()
+                
+                db.commit()
+                total_deleted = sum([deleted_metrics, deleted_agents, deleted_workspaces, deleted_crons, deleted_sessions, deleted_gateways, deleted_health])
+                if total_deleted > 0:
+                    logger.info(f"Cleanup task removed {total_deleted} old records (older than 7 days).")
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Error during cleanup task: {e}")
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"Cleanup task failed: {e}")
+        
+        # Run once a day
+        await asyncio.sleep(86400)
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(cleanup_old_data())
+# -----------------------------------
 
 app.add_middleware(
     CORSMiddleware,

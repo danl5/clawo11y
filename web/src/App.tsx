@@ -1105,6 +1105,7 @@ function WorkspaceTab({ messages }: { messages: WsMessage[] }) {
 /* ── Logs ── */
 function LogsTab({ messages }: any) {
   const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const gatewayLogs = messages.filter((m: WsMessage) => m.type === 'gateway_log_event');
 
@@ -1112,47 +1113,77 @@ function LogsTab({ messages }: any) {
     return <EmptyState icon="📋" title="No logs yet" subtitle="Gateway and system logs will stream here" />;
   }
 
+  const filteredLogs = gatewayLogs.filter((ev: WsMessage) => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    const pathMatch = ev.log_path?.toLowerCase().includes(q);
+    const linesMatch = ev.lines?.some((l: any) => 
+      (typeof l === 'string' ? l : JSON.stringify(l)).toLowerCase().includes(q)
+    );
+    return pathMatch || linesMatch;
+  });
+
   const LEVEL_COLORS: Record<string, string> = { error: '#f87171', warn: '#fbbf24', info: '#60a5fa' };
 
   return (
-    <div className="space-y-1.5 animate-fade-up">
-      {[...gatewayLogs]
-        .sort((a: WsMessage, b: WsMessage) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-        .slice(0, 60)
-        .map((ev: WsMessage, i: number) => {
-          let level = (ev as any).level || 'info';
-          if (ev.lines && ev.lines.length > 0 && typeof ev.lines[0] === 'object') {
-            level = ev.lines[0].level || ev.lines[0].status || 'info';
-          }
-          const isExpanded = expandedLogId === i;
-          
-          return (
-            <div key={i} className="flex flex-col gap-2 p-3 rounded-xl animate-slide-in transition-all hover:bg-white/[0.03] cursor-pointer"
-              onClick={() => setExpandedLogId(isExpanded ? null : i)}
-              style={{ animationDelay: `${i * 15}ms`, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
-              <div className="flex items-start gap-3">
-                <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded shrink-0 font-bold"
-                  style={{ background: (LEVEL_COLORS[level] || 'rgba(255,255,255,0.2)') + '15', color: LEVEL_COLORS[level] || 'rgba(255,255,255,0.35)', border: `1px solid ${LEVEL_COLORS[level] || 'rgba(255,255,255,0.1)'}25` }}>
-                  {level}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs truncate font-mono" style={{ color: 'rgba(255,255,255,0.4)' }}>{ev.log_path?.split('/').pop() || 'system.log'}</div>
+    <div className="space-y-4 animate-fade-up">
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1 max-w-md">
+          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <span className="text-white/30 text-xs">🔍</span>
+          </div>
+          <input
+            type="text"
+            placeholder="Search logs..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full bg-white/[0.03] border border-white/10 rounded-lg pl-8 pr-4 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-blue-500/50 transition-colors"
+          />
+        </div>
+        <div className="text-[10px] text-white/40">
+          Showing {filteredLogs.length} of {gatewayLogs.length} logs
+        </div>
+      </div>
+
+      <div className="space-y-1.5">
+        {[...filteredLogs]
+          .sort((a: WsMessage, b: WsMessage) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+          .slice(0, 100)
+          .map((ev: WsMessage, i: number) => {
+            let level = (ev as any).level || 'info';
+            if (ev.lines && ev.lines.length > 0 && typeof ev.lines[0] === 'object') {
+              level = ev.lines[0].level || ev.lines[0].status || 'info';
+            }
+            const isExpanded = expandedLogId === i || !!searchQuery; // Auto-expand when searching
+            
+            return (
+              <div key={i} className="flex flex-col gap-2 p-3 rounded-xl animate-slide-in transition-all hover:bg-white/[0.03] cursor-pointer"
+                onClick={() => setExpandedLogId(isExpanded && !searchQuery ? null : i)}
+                style={{ animationDelay: `${i * 15}ms`, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                <div className="flex items-start gap-3">
+                  <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded shrink-0 font-bold"
+                    style={{ background: (LEVEL_COLORS[level] || 'rgba(255,255,255,0.2)') + '15', color: LEVEL_COLORS[level] || 'rgba(255,255,255,0.35)', border: `1px solid ${LEVEL_COLORS[level] || 'rgba(255,255,255,0.1)'}25` }}>
+                    {level}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs truncate font-mono" style={{ color: 'rgba(255,255,255,0.4)' }}>{ev.log_path?.split('/').pop() || 'system.log'}</div>
+                  </div>
+                  <span className="text-[10px] shrink-0" style={{ color: 'rgba(255,255,255,0.15)' }}>
+                    {ev.timestamp ? fmtMs(new Date(ev.timestamp).getTime()) : ''}
+                  </span>
                 </div>
-                <span className="text-[10px] shrink-0" style={{ color: 'rgba(255,255,255,0.15)' }}>
-                  {ev.timestamp ? fmtMs(new Date(ev.timestamp).getTime()) : ''}
-                </span>
+                
+                {isExpanded && ev.lines && ev.lines.length > 0 && (
+                  <div className="mt-2 p-3 rounded-lg bg-black/40 border border-white/5 overflow-x-auto" onClick={(e) => e.stopPropagation()}>
+                    <pre className="text-[10px] font-mono text-gray-300 whitespace-pre-wrap leading-relaxed">
+                      {ev.lines.map((l: any) => typeof l === 'string' ? l : JSON.stringify(l, null, 2)).join('\n')}
+                    </pre>
+                  </div>
+                )}
               </div>
-              
-              {isExpanded && ev.lines && ev.lines.length > 0 && (
-                <div className="mt-2 p-3 rounded-lg bg-black/40 border border-white/5 overflow-x-auto" onClick={(e) => e.stopPropagation()}>
-                  <pre className="text-[10px] font-mono text-gray-300 whitespace-pre-wrap leading-relaxed">
-                    {ev.lines.map((l: any) => typeof l === 'string' ? l : JSON.stringify(l, null, 2)).join('\n')}
-                  </pre>
-                </div>
-              )}
-            </div>
-          );
-        })}
+            );
+          })}
+      </div>
     </div>
   );
 }

@@ -79,11 +79,28 @@ If you are running the "Overlord Architecture" where your central O11y Server is
 
 1. **Deploy the Server:** Run the Docker Compose (Step 1) on your central monitoring server and expose port `8000`.
 2. **Deploy the Agent:** Head to the [Releases Page](https://github.com/danl5/clawo11y/releases) and download the pre-compiled binary for your worker's OS/Arch.
-3. **Run the Agent:** Point the agent to your central server:
+3. **Run the Agent:** Point the agent to your central server and specify the monitored directory (optional, defaults to `~/.openclaw`):
 ```bash
-O11Y_SERVER_URL=http://<YOUR_CENTRAL_SERVER_IP>:8000 ./clawo11y-agent-linux-amd64
+O11Y_SERVER_URL=http://<YOUR_CENTRAL_SERVER_IP>:8000 OPENCLAW_BASE_DIR=/var/lib/my-bot ./clawo11y-agent-linux-amd64
 ```
 *Pro-tip: Run this binary via `systemd` or `pm2` so it stays alive in the background.*
+
+---
+
+## ⚙️ Configuration (Environment Variables)
+
+Both the Agent and Server support environment variables for easy configuration without changing code.
+
+### Agent (`clawo11y-agent`)
+| Variable | Default | Description |
+|---|---|---|
+| `O11Y_SERVER_URL` | `http://127.0.0.1:8000` | The address of your central O11y FastAPI server. |
+| `OPENCLAW_BASE_DIR` | `~/.openclaw` | The root directory where your Agent's `workspace`, `cron`, and `logs` live. |
+
+### Server (`core.server.main`)
+| Variable | Default | Description |
+|---|---|---|
+| `O11Y_DB_URL` | `sqlite:///./o11y_server.db` | Connection string for the telemetry database. |
 
 ---
 
