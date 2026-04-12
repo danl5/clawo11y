@@ -127,6 +127,7 @@ Both the Agent and Server support environment variables for easy configuration w
 |---|---|---|
 | `O11Y_SERVER_URL` | `http://127.0.0.1:8000` | The address of your central O11y FastAPI server. |
 | `OPENCLAW_BASE_DIR` | `~/.openclaw` | The root directory where your Agent's `workspace`, `cron`, and `logs` live. |
+| `GATEWAY_LOG_DIR` | `<OPENCLAW_BASE_DIR>/logs` | Optional explicit directory for gateway log collection. If unset and `<OPENCLAW_BASE_DIR>/logs` does not exist, the agent falls back to `/tmp/openclaw`. |
 
 ### Server (`core.server.main`)
 | Variable | Default | Description |

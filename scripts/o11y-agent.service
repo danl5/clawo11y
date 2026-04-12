@@ -13,6 +13,7 @@ ExecStart=/opt/clawo11y/clawo11y-agent-linux-amd64
 # Environment Configuration
 Environment="O11Y_SERVER_URL=http://127.0.0.1:8000"
 Environment="OPENCLAW_BASE_DIR=/root/.openclaw"
+# Environment="GATEWAY_LOG_DIR=/tmp/openclaw"
 
 Restart=always
 RestartSec=5

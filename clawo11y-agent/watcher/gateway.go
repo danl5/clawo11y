@@ -3,6 +3,7 @@ package watcher
 import (
 	"bufio"
 	"encoding/json"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -52,7 +53,7 @@ func (w *GatewayLogWatcher) Start() error {
 	}
 	w.watcher = watcher
 
-	if err := watcher.Add(w.logDir); err != nil {
+	if err := w.addWatchDirs(w.logDir); err != nil {
 		return err
 	}
 
@@ -61,21 +62,42 @@ func (w *GatewayLogWatcher) Start() error {
 	return nil
 }
 
-func (w *GatewayLogWatcher) scanExisting() {
-	entries, err := os.ReadDir(w.logDir)
-	if err != nil {
-		return
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".log") {
-			fpath := filepath.Join(w.logDir, entry.Name())
-			info, err := os.Stat(fpath)
-			if err == nil {
-				// Set initial offset to the end of the file so we only tail new lines
-				w.knownFiles[fpath] = info.Size()
+func (w *GatewayLogWatcher) addWatchDirs(root string) error {
+	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			if err := w.watcher.Add(path); err != nil {
+				log.Printf("Gateway log watcher: failed to watch %s: %v", path, err)
 			}
 		}
-	}
+		return nil
+	})
+}
+
+func (w *GatewayLogWatcher) scanExisting() {
+	w.loadState()
+	_ = filepath.Walk(w.logDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+		if isGatewayLogFile(path) {
+			if offset, ok := w.knownFiles[path]; ok {
+				if offset > info.Size() {
+					w.knownFiles[path] = 0
+				}
+				if count := w.readNewLines(path); count == 0 && info.Size() > 0 {
+					w.emitTailSnapshot(path, 100)
+				}
+			} else {
+				w.knownFiles[path] = 0
+				w.readNewLines(path)
+			}
+		}
+		return nil
+	})
+	w.saveState()
 }
 
 func (w *GatewayLogWatcher) watchLoop() {
@@ -85,8 +107,23 @@ func (w *GatewayLogWatcher) watchLoop() {
 			if !ok {
 				return
 			}
-			if event.Has(fsnotify.Write) && strings.HasSuffix(event.Name, ".log") {
-				w.readNewLines(event.Name)
+			if event.Has(fsnotify.Create) {
+				if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
+					_ = w.addWatchDirs(event.Name)
+					continue
+				}
+			}
+			if isGatewayLogFile(event.Name) {
+				if event.Has(fsnotify.Create) || event.Has(fsnotify.Rename) {
+					w.knownFiles[event.Name] = 0
+				}
+				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Rename) {
+					w.readNewLines(event.Name)
+				}
+				if event.Has(fsnotify.Remove) {
+					delete(w.knownFiles, event.Name)
+					w.saveState()
+				}
 			}
 		case err, ok := <-w.watcher.Errors:
 			if !ok {
@@ -97,53 +134,236 @@ func (w *GatewayLogWatcher) watchLoop() {
 	}
 }
 
-func (w *GatewayLogWatcher) readNewLines(path string) {
+func isGatewayLogFile(path string) bool {
+	base := strings.ToLower(filepath.Base(path))
+	return strings.Contains(base, "openclaw") && strings.Contains(base, ".log")
+}
+
+func (w *GatewayLogWatcher) readNewLines(path string) int {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return 0
+	}
+
+	lastSize := w.knownFiles[path]
+
+	if info.Size() < lastSize {
+		lastSize = 0
+	}
+	if info.Size() == lastSize {
+		return 0
+	}
+
+	if _, err := file.Seek(lastSize, 0); err != nil {
+		return 0
+	}
+	reader := bufio.NewReader(file)
+	currentOffset := lastSize
+	var lines []map[string]interface{}
+	totalLines := 0
+	const batchSize = 200
+	for {
+		chunk, err := reader.ReadString('\n')
+		if len(chunk) > 0 {
+			currentOffset += int64(len(chunk))
+			text := strings.TrimSpace(chunk)
+			if text != "" {
+				line := w.parseLine(path, text)
+				if line != nil {
+					lines = append(lines, line)
+					totalLines++
+				}
+			}
+			if len(lines) >= batchSize {
+				w.emitLines(path, lines)
+				lines = nil
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Printf("Gateway log watcher read error for %s: %v", path, err)
+			break
+		}
+	}
+
+	w.knownFiles[path] = currentOffset
+	w.saveState()
+	w.emitLines(path, lines)
+	return totalLines
+}
+
+func (w *GatewayLogWatcher) emitLines(path string, lines []map[string]interface{}) {
+	if len(lines) == 0 {
+		return
+	}
+	select {
+	case w.eventChan <- GatewayLogEvent{Type: "gateway.log", LogPath: path, Lines: lines, Timestamp: time.Now().UTC()}:
+	case <-time.After(5 * time.Second):
+		log.Printf("GatewayLogWatcher: channel full, dropped event after 5s timeout")
+	}
+}
+
+func (w *GatewayLogWatcher) emitTailSnapshot(path string, maxLines int) {
 	file, err := os.Open(path)
 	if err != nil {
 		return
 	}
 	defer file.Close()
 
-	info, err := file.Stat()
-	if err != nil {
-		return
-	}
-
-	lastSize := w.knownFiles[path]
-	if info.Size() <= lastSize {
-		return
-	}
-
-	file.Seek(lastSize, 0)
-	scanner := bufio.NewScanner(file)
-	var lines []map[string]interface{}
-	for scanner.Scan() {
-		text := strings.TrimSpace(scanner.Text())
-		if text == "" {
-			continue
+	reader := bufio.NewReader(file)
+	buffer := make([]string, 0, maxLines)
+	for {
+		chunk, err := reader.ReadString('\n')
+		if len(chunk) > 0 {
+			text := strings.TrimSpace(chunk)
+			if text != "" {
+				if len(buffer) == maxLines {
+					buffer = append(buffer[1:], text)
+				} else {
+					buffer = append(buffer, text)
+				}
+			}
 		}
-		line := w.parseLine(text)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return
+		}
+	}
+
+	lines := make([]map[string]interface{}, 0, len(buffer))
+	for _, text := range buffer {
+		line := w.parseLine(path, text)
 		if line != nil {
+			line["snapshot"] = true
 			lines = append(lines, line)
 		}
 	}
-	w.knownFiles[path] = info.Size()
+	w.emitLines(path, lines)
+}
 
-	if len(lines) > 0 {
-		select {
-		case w.eventChan <- GatewayLogEvent{Type: "gateway.log", LogPath: path, Lines: lines, Timestamp: time.Now().UTC()}:
-		case <-time.After(5 * time.Second):
-			log.Printf("GatewayLogWatcher: channel full, dropped event after 5s timeout")
-		}
+func (w *GatewayLogWatcher) stateFilePath() string {
+	return filepath.Join(w.logDir, ".o11y-gateway-state.json")
+}
+
+func (w *GatewayLogWatcher) loadState() {
+	data, err := os.ReadFile(w.stateFilePath())
+	if err != nil {
+		return
+	}
+	var state map[string]int64
+	if err := json.Unmarshal(data, &state); err != nil {
+		return
+	}
+	for path, offset := range state {
+		w.knownFiles[path] = offset
 	}
 }
 
-func (w *GatewayLogWatcher) parseLine(text string) map[string]interface{} {
+func (w *GatewayLogWatcher) saveState() {
+	data, err := json.Marshal(w.knownFiles)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(w.stateFilePath(), data, 0644)
+}
+
+func (w *GatewayLogWatcher) parseLine(path string, text string) map[string]interface{} {
 	var raw map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &raw); err != nil {
-		return map[string]interface{}{"raw_text": text}
+		return map[string]interface{}{
+			"source":   filepath.Base(path),
+			"log_path": path,
+			"level":    detectLevelFromText(text),
+			"message":  text,
+			"raw_text": text,
+		}
 	}
-	return raw
+	line := map[string]interface{}{
+		"source":   filepath.Base(path),
+		"log_path": path,
+		"raw_text": text,
+	}
+	for k, v := range raw {
+		line[k] = v
+	}
+	if _, ok := line["level"]; !ok {
+		if level := firstString(raw, "severity", "lvl", "status"); level != "" {
+			line["level"] = normalizeLevel(level)
+		} else {
+			line["level"] = "info"
+		}
+	} else if level, ok := line["level"].(string); ok {
+		line["level"] = normalizeLevel(level)
+	}
+	if _, ok := line["message"]; !ok {
+		if msg := firstString(raw, "msg", "error", "err", "event"); msg != "" {
+			line["message"] = msg
+		}
+	}
+	if _, ok := line["timestamp"]; !ok {
+		if ts := firstString(raw, "time", "ts", "@timestamp"); ts != "" {
+			line["timestamp"] = ts
+		}
+	}
+	if _, ok := line["logger"]; !ok {
+		if logger := firstString(raw, "module", "component"); logger != "" {
+			line["logger"] = logger
+		}
+	}
+	if _, ok := line["service"]; !ok {
+		if service := firstString(raw, "app", "source_name"); service != "" {
+			line["service"] = service
+		}
+	}
+	return line
+}
+
+func firstString(raw map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := raw[key]; ok {
+			if s, ok := value.(string); ok && strings.TrimSpace(s) != "" {
+				return strings.TrimSpace(s)
+			}
+		}
+	}
+	return ""
+}
+
+func normalizeLevel(level string) string {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "warning":
+		return "warn"
+	case "fatal", "panic":
+		return "error"
+	case "":
+		return "info"
+	default:
+		return strings.ToLower(strings.TrimSpace(level))
+	}
+}
+
+func detectLevelFromText(text string) string {
+	upper := strings.ToUpper(text)
+	switch {
+	case strings.Contains(upper, "ERROR"), strings.Contains(upper, "FATAL"), strings.Contains(upper, "PANIC"):
+		return "error"
+	case strings.Contains(upper, "WARN"):
+		return "warn"
+	case strings.Contains(upper, "DEBUG"), strings.Contains(upper, "TRACE"):
+		return "debug"
+	default:
+		return "info"
+	}
 }
 
 func (w *GatewayLogWatcher) Stop() error {
