@@ -4,10 +4,19 @@
 FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
-COPY . .
+
+# Copy Go module files
+COPY services/agent/go.mod services/agent/go.sum ./services/agent/
+WORKDIR /app/services/agent
+RUN go mod download
+
+# Copy the source code
+WORKDIR /app
+COPY services/agent/ ./services/agent/
 
 # Build the static binary
-RUN CGO_ENABLED=0 GOOS=linux go build -o clawo11y-agent .
+WORKDIR /app/services/agent
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /app/clawo11y-agent .
 
 # ==========================================
 # Run the Go Agent

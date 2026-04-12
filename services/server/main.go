@@ -79,7 +79,7 @@ func main() {
 	}
 
 	// Serve Static Files (if any)
-	webDist := "../web/dist"
+	webDist := "services/web/dist"
 	if stat, err := os.Stat(webDist); err == nil && stat.IsDir() {
 		// Serve static files
 		router.Static("/", webDist)
@@ -87,6 +87,15 @@ func main() {
 		router.NoRoute(func(c *gin.Context) {
 			c.File(webDist + "/index.html")
 		})
+	} else {
+		// Fallback for local development
+		webDistDev := "../web/dist"
+		if stat, err := os.Stat(webDistDev); err == nil && stat.IsDir() {
+			router.Static("/", webDistDev)
+			router.NoRoute(func(c *gin.Context) {
+				c.File(webDistDev + "/index.html")
+			})
+		}
 	}
 
 	router.GET("/health", func(c *gin.Context) {
