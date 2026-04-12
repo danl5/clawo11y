@@ -22,6 +22,7 @@ const (
 func detectOpenClawDirs() (agentsBaseDir, cronPath, workspaceBaseDir, gatewayLogDir string) {
 	// Let user override via environment variable
 	baseDir := os.Getenv("OPENCLAW_BASE_DIR")
+	explicitGatewayLogDir := os.Getenv("GATEWAY_LOG_DIR")
 
 	if baseDir == "" {
 		home, err := os.UserHomeDir()
@@ -33,12 +34,18 @@ func detectOpenClawDirs() (agentsBaseDir, cronPath, workspaceBaseDir, gatewayLog
 
 	agentsBaseDir = filepath.Join(baseDir, "agents")
 	cronPath = filepath.Join(baseDir, "cron/jobs.json")
-	gatewayLogDir = filepath.Join(baseDir, "logs")
 
-	// Fallback for gateway logs if the directory doesn't exist in the baseDir
-	if _, err := os.Stat(filepath.Join(baseDir, "logs")); os.IsNotExist(err) {
-		if info, err := os.Stat("/tmp/moltbot"); err == nil && info.IsDir() {
-			gatewayLogDir = "/tmp/moltbot"
+	// Gateway logs:
+	// 1. Environment variable
+	// 2. /tmp/openclaw (preferred default)
+	// 3. ~/.openclaw/logs
+	if explicitGatewayLogDir != "" {
+		gatewayLogDir = explicitGatewayLogDir
+	} else {
+		if info, err := os.Stat("/tmp/openclaw"); err == nil && info.IsDir() {
+			gatewayLogDir = "/tmp/openclaw"
+		} else {
+			gatewayLogDir = filepath.Join(baseDir, "logs")
 		}
 	}
 
@@ -81,7 +88,7 @@ func main() {
 		log.Printf("MultiSessionWatcher started")
 	}
 
-	workspaceEventChan := make(chan watcher.WorkspaceEvent, 100)
+	workspaceEventChan := make(chan watcher.WorkspaceEvent, 1000)
 	workspaceWatcher := watcher.NewWorkspaceWatcher(
 		workspaceBaseDir,
 		workspaceEventChan,
@@ -90,25 +97,30 @@ func main() {
 		log.Printf("Workspace watcher failed: %v", err)
 	}
 
-	cronEventChan := make(chan watcher.CronEvent, 100)
+	cronEventChan := make(chan watcher.CronEvent, 1000)
 	cronWatcher := watcher.NewCronWatcher(cronPath, cronEventChan)
 	if err := cronWatcher.Start(); err != nil {
 		log.Printf("Cron watcher failed: %v", err)
 	}
 
-	sessionsEventChan := make(chan watcher.SessionsEvent, 100)
+	sessionsEventChan := make(chan watcher.SessionsEvent, 1000)
 	sessionsWatcher := watcher.NewSessionsWatcher(agentsBaseDir, sessionsEventChan)
 	if err := sessionsWatcher.Start(); err != nil {
 		log.Printf("Sessions watcher failed: %v", err)
 	}
 
-	gatewayEventChan := make(chan watcher.GatewayLogEvent, 100)
+	gatewayEventChan := make(chan watcher.GatewayLogEvent, 5000)
 	gatewayWatcher := watcher.NewGatewayLogWatcher(gatewayLogDir, gatewayEventChan)
 	if err := gatewayWatcher.Start(); err != nil {
 		log.Printf("Gateway log watcher failed: %v", err)
+	} else {
+		log.Printf("Gateway watcher started on %s", gatewayLogDir)
 	}
 
 	metricsChan := make(chan schemas.SystemMetricsPayload, metricsBufSize)
+
+	// Semaphore to prevent DDoSing the server and causing SQLite "unable to open database file"
+	requestSem := make(chan struct{}, 3)
 
 	// Metrics collector goroutine — isolated so it doesn't block on slow sends
 	go func() {
@@ -159,7 +171,9 @@ func main() {
 				continue
 			}
 			ev.NodeID = nodeInfo.NodeID
+			requestSem <- struct{}{}
 			go func(e schemas.AgentEventPayload) {
+				defer func() { <-requestSem }()
 				if err := srvClient.SendAgentEvent(e); err != nil {
 					log.Printf("Error sending session event: %v", err)
 				} else if e.EventType == "token_usage" {
@@ -173,7 +187,9 @@ func main() {
 				continue
 			}
 			ev.NodeID = nodeInfo.NodeID
+			requestSem <- struct{}{}
 			go func(e watcher.WorkspaceEvent) {
+				defer func() { <-requestSem }()
 				if err := srvClient.SendWorkspaceEvent(toWorkspacePayload(e)); err != nil {
 					log.Printf("Error sending workspace event: %v", err)
 				} else {
@@ -186,7 +202,9 @@ func main() {
 				continue
 			}
 			ev.NodeID = nodeInfo.NodeID
+			requestSem <- struct{}{}
 			go func(e watcher.CronEvent) {
+				defer func() { <-requestSem }()
 				if err := srvClient.SendCronEvent(toCronPayload(e)); err != nil {
 					log.Printf("Error sending cron event: %v", err)
 				} else {
@@ -199,7 +217,9 @@ func main() {
 				continue
 			}
 			ev.NodeID = nodeInfo.NodeID
+			requestSem <- struct{}{}
 			go func(e watcher.SessionsEvent) {
+				defer func() { <-requestSem }()
 				if err := srvClient.SendSessionsEvent(toSessionsPayload(e)); err != nil {
 					log.Printf("Error sending sessions event: %v", err)
 				} else {
@@ -212,7 +232,11 @@ func main() {
 				continue
 			}
 			ev.NodeID = nodeInfo.NodeID
+
+			// Use semaphore to limit concurrent requests
+			requestSem <- struct{}{}
 			go func(e watcher.GatewayLogEvent) {
+				defer func() { <-requestSem }()
 				if err := srvClient.SendGatewayLogEvent(toGatewayPayload(e)); err != nil {
 					log.Printf("Error sending gateway log event: %v", err)
 				}

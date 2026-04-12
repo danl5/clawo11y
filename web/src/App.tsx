@@ -1205,30 +1205,182 @@ function WorkspaceTab({ messages }: { messages: WsMessage[] }) {
 
 /* ── Logs ── */
 function LogsTab({ messages }: any) {
-  const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeLevels, setActiveLevels] = useState<Set<string>>(new Set(['info', 'warn', 'error', 'fatal', 'debug', 'trace']));
+  const [sourceFilter, setSourceFilter] = useState<string>('all');
+  const [dayFilter, setDayFilter] = useState<string>('all');
+  const [autoFollow, setAutoFollow] = useState(true);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  const gatewayLogs = messages.filter((m: WsMessage) => m.type === 'gateway_log_event');
+  const gatewayLogs = useMemo(() => messages.filter((m: WsMessage) => m.type === 'gateway_log_event'), [messages]);
 
-  if (gatewayLogs.length === 0) {
+  const normalizeLogLevel = useCallback((value?: string) => {
+    const normalized = (value || 'info').toLowerCase();
+    if (normalized === 'warning') return 'warn';
+    if (normalized === 'panic') return 'fatal';
+    if (normalized === 'error') return 'error';
+    return normalized;
+  }, []);
+
+  const inferLogLevel = useCallback((text: string) => {
+    const upper = text.toUpperCase();
+    if (upper.includes('FATAL') || upper.includes('PANIC')) return 'fatal';
+    if (upper.includes('ERROR')) return 'error';
+    if (upper.includes('WARN')) return 'warn';
+    if (upper.includes('DEBUG')) return 'debug';
+    if (upper.includes('TRACE')) return 'trace';
+    return 'info';
+  }, []);
+
+  const logEntries = useMemo<Array<{
+    id: string;
+    timestamp: string;
+    day: string;
+    level: string;
+    source: string;
+    message: string;
+    raw: Record<string, unknown>;
+    logPath: string;
+  }>>(() => {
+    return gatewayLogs.flatMap((ev: WsMessage, eventIndex: number) =>
+      (ev.lines || []).map((line: any, lineIndex: number) => {
+        const raw = typeof line === 'string' ? { raw_text: line } : (line || {});
+        
+        // Handle specific openclaw tslog format which looks like {"0": "msg part 1", "1": "msg part 2", "_meta": {...}}
+        const meta = raw._meta as Record<string, any> || {};
+        const isTsLog = !!raw._meta;
+
+        let metaName = meta.name || '';
+        if (typeof metaName === 'string' && metaName.trim().startsWith('{')) {
+          try {
+            const parsed = JSON.parse(metaName);
+            metaName = parsed.subsystem || parsed.module || parsed.name || metaName;
+          } catch (e) {}
+        }
+
+        let extractedMessage = '';
+        if (isTsLog) {
+          // Combine numeric keys to form the message
+          const msgParts = [];
+          for (let i = 0; i < 10; i++) {
+            if (raw[String(i)] !== undefined) {
+              let part = raw[String(i)];
+              
+              // If the part is a JSON string, parse it so we can check if it's pure metadata
+              if (typeof part === 'string' && part.trim().startsWith('{') && part.trim().endsWith('}')) {
+                try { part = JSON.parse(part); } catch (e) {}
+              }
+
+              if (typeof part === 'object' && part !== null) {
+                const keys = Object.keys(part);
+                // If it's an object with ONLY 'subsystem' or 'module', treat it as metadata and hide it from the message
+                if (keys.length === 1 && (keys[0] === 'subsystem' || keys[0] === 'module')) {
+                  if (!metaName) metaName = part[keys[0]];
+                  continue;
+                }
+                msgParts.push(JSON.stringify(part));
+              } else {
+                msgParts.push(String(part));
+              }
+            }
+          }
+          extractedMessage = msgParts.join(' ');
+        }
+
+        const fallbackSource = raw.source || ev.log_path?.split('/').pop() || 'system.log';
+        let message = extractedMessage || raw.message || raw.msg || raw.raw_text || JSON.stringify(raw);
+        
+        // If message is just a stringified JSON of the exact same raw object, and it's tslog, we already handled it.
+        // If not tslog, and message is still raw JSON, try to format it nicely.
+        if (typeof message !== 'string') {
+          message = JSON.stringify(message);
+        }
+
+        const source = metaName || raw.subsystem || raw.logger || raw.module || raw.component || raw.service || raw.app || fallbackSource;
+        
+        let levelStr = meta.logLevelName || raw.level || raw.severity || raw.status;
+        if (!levelStr && typeof message === 'string') {
+          levelStr = inferLogLevel(message);
+        }
+        const level = normalizeLogLevel(levelStr || 'info');
+        
+        const timestamp = meta.date || raw.timestamp || raw.time || raw.ts || ev.timestamp || '';
+        const dayFromTimestamp = typeof timestamp === 'string' && timestamp ? timestamp.slice(0, 10) : '';
+        const dayFromPathMatch = String(raw.log_path || ev.log_path || '').match(/\d{4}-\d{2}-\d{2}/);
+        const day = dayFromTimestamp || dayFromPathMatch?.[0] || 'unknown';
+        
+        return {
+          id: `${ev.timestamp || 'no-ts'}:${eventIndex}:${lineIndex}:${source}`,
+          timestamp,
+          day,
+          level,
+          source,
+          message,
+          raw,
+          logPath: raw.log_path || ev.log_path || '',
+        };
+      })
+    );
+  }, [gatewayLogs, inferLogLevel, normalizeLogLevel]);
+
+  const sourceOptions = useMemo<string[]>(
+    () => Array.from(new Set<string>(logEntries.map((entry) => entry.source))).sort(),
+    [logEntries]
+  );
+
+  const dayOptions = useMemo<string[]>(
+    () => Array.from(new Set<string>(logEntries.map((entry) => entry.day))).sort().reverse(),
+    [logEntries]
+  );
+
+  if (logEntries.length === 0) {
     return <EmptyState icon="📋" title="No logs yet" subtitle="Gateway and system logs will stream here" />;
   }
 
-  const filteredLogs = gatewayLogs.filter((ev: WsMessage) => {
+  const filteredLogs = logEntries.filter((entry) => {
+    if (!activeLevels.has(entry.level)) return false;
+    if (sourceFilter !== 'all' && entry.source !== sourceFilter) return false;
+    if (dayFilter !== 'all' && entry.day !== dayFilter) return false;
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
-    const pathMatch = ev.log_path?.toLowerCase().includes(q);
-    const linesMatch = ev.lines?.some((l: any) => 
-      (typeof l === 'string' ? l : JSON.stringify(l)).toLowerCase().includes(q)
-    );
-    return pathMatch || linesMatch;
+    return [
+      entry.day,
+      entry.message,
+      entry.source,
+      entry.logPath,
+      JSON.stringify(entry.raw),
+    ].some((value) => value.toLowerCase().includes(q));
   });
 
-  const LEVEL_COLORS: Record<string, string> = { error: '#f87171', warn: '#fbbf24', info: '#60a5fa' };
+  // Sort chronologically (oldest first) so that tailing is natural at the bottom
+  filteredLogs.sort((a, b) => new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime());
+
+  const ALL_LEVELS = ['trace', 'debug', 'info', 'warn', 'error', 'fatal'];
+  const LEVEL_COLORS: Record<string, string> = { 
+    fatal: '#dc2626', error: '#ef4444', warn: '#f59e0b', 
+    info: '#3b82f6', debug: '#8b5cf6', trace: '#6b7280' 
+  };
+
+  const toggleLevel = (level: string) => {
+    setActiveLevels(prev => {
+      const next = new Set(prev);
+      if (next.has(level)) next.delete(level);
+      else next.add(level);
+      return next;
+    });
+  };
+
+  // Auto-follow
+  useEffect(() => {
+    if (autoFollow && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [filteredLogs.length, autoFollow]);
 
   return (
-    <div className="space-y-4 animate-fade-up">
-      <div className="flex items-center gap-3">
+    <div className="flex flex-col h-full space-y-4 animate-fade-up min-h-0">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 shrink-0">
         <div className="relative flex-1 max-w-md">
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
             <span className="text-white/30 text-xs">🔍</span>
@@ -1241,43 +1393,114 @@ function LogsTab({ messages }: any) {
             className="w-full bg-white/[0.03] border border-white/10 rounded-lg pl-8 pr-4 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-blue-500/50 transition-colors"
           />
         </div>
+        
+        <label className="flex items-center gap-2 cursor-pointer text-xs text-white/70 hover:text-white transition-colors">
+          <input 
+            type="checkbox" 
+            checked={autoFollow}
+            onChange={(e) => setAutoFollow(e.target.checked)}
+            className="w-3.5 h-3.5 accent-blue-500 bg-white/5 border-white/10 rounded"
+          />
+          Auto-follow
+        </label>
+
+        <div className="flex items-center gap-2">
+          {ALL_LEVELS.map((level) => {
+            const isActive = activeLevels.has(level);
+            return (
+              <button
+                key={level}
+                onClick={() => toggleLevel(level)}
+                className="flex items-center gap-1.5 text-[10px] px-2 py-1.5 rounded-lg uppercase tracking-wider transition-all"
+                style={{
+                  background: isActive ? `${LEVEL_COLORS[level]}15` : 'rgba(255,255,255,0.03)',
+                  color: isActive ? LEVEL_COLORS[level] : 'rgba(255,255,255,0.4)',
+                  border: isActive ? `1px solid ${LEVEL_COLORS[level]}40` : '1px solid rgba(255,255,255,0.05)',
+                }}
+              >
+                <div className={`w-2 h-2 rounded-sm border flex items-center justify-center transition-colors`}
+                     style={{ 
+                       background: isActive ? LEVEL_COLORS[level] : 'transparent',
+                       borderColor: isActive ? LEVEL_COLORS[level] : 'rgba(255,255,255,0.3)'
+                     }}>
+                  {isActive && (
+                    <svg viewBox="0 0 14 14" fill="none" className="w-1.5 h-1.5 text-white stroke-current stroke-[3] stroke-linecap-round stroke-linejoin-round">
+                      <path d="M3 7.5L5.5 10L11 4" />
+                    </svg>
+                  )}
+                </div>
+                {level}
+              </button>
+            );
+          })}
+        </div>
+        <select
+          value={dayFilter}
+          onChange={(e) => setDayFilter(e.target.value)}
+          className="bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500/50 transition-colors"
+        >
+          <option value="all">All days</option>
+          {dayOptions.map((day) => (
+            <option key={day} value={day}>{day}</option>
+          ))}
+        </select>
+        <select
+          value={sourceFilter}
+          onChange={(e) => setSourceFilter(e.target.value)}
+          className="bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500/50 transition-colors"
+        >
+          <option value="all">All sources</option>
+          {sourceOptions.map((source) => (
+            <option key={source} value={source}>{source}</option>
+          ))}
+        </select>
         <div className="text-[10px] text-white/40">
-          Showing {filteredLogs.length} of {gatewayLogs.length} logs
+          Showing {filteredLogs.length} of {logEntries.length} lines
         </div>
       </div>
 
-      <div className="space-y-1.5">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-px pr-2 min-h-0 pb-10 custom-scrollbar bg-[#050810]/50 rounded-xl border border-white/5 p-2">
         {[...filteredLogs]
-          .sort((a: WsMessage, b: WsMessage) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-          .slice(0, 100)
-          .map((ev: WsMessage, i: number) => {
-            let level = (ev as any).level || 'info';
-            if (ev.lines && ev.lines.length > 0 && typeof ev.lines[0] === 'object') {
-              level = ev.lines[0].level || ev.lines[0].status || 'info';
-            }
-            const isExpanded = expandedLogId === i || !!searchQuery; // Auto-expand when searching
-            
+          .slice(-1000) // Render up to 1000 latest to prevent DOM lag
+          .map((entry, i: number) => {
+            const isExpanded = expandedLogId === entry.id || !!searchQuery;
             return (
-              <div key={i} className="flex flex-col gap-2 p-3 rounded-xl animate-slide-in transition-all hover:bg-white/[0.03] cursor-pointer"
-                onClick={() => setExpandedLogId(isExpanded && !searchQuery ? null : i)}
-                style={{ animationDelay: `${i * 15}ms`, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
-                <div className="flex items-start gap-3">
-                  <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded shrink-0 font-bold"
-                    style={{ background: (LEVEL_COLORS[level] || 'rgba(255,255,255,0.2)') + '15', color: LEVEL_COLORS[level] || 'rgba(255,255,255,0.35)', border: `1px solid ${LEVEL_COLORS[level] || 'rgba(255,255,255,0.1)'}25` }}>
-                    {level}
+              <div key={entry.id} className="flex flex-col gap-1 p-2 rounded-lg animate-slide-in transition-all hover:bg-white/[0.04] cursor-pointer border-b border-white/[0.02] last:border-b-0"
+                onClick={() => setExpandedLogId(isExpanded && !searchQuery ? null : entry.id)}
+                style={{ animationDelay: `${i * 5}ms` }}>
+                
+                <div className="flex items-start sm:items-center gap-3">
+                  <span className="text-[10px] w-[70px] shrink-0 font-mono tracking-wide" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                    {entry.timestamp ? fmtMs(new Date(entry.timestamp).getTime()) : ''}
                   </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs truncate font-mono" style={{ color: 'rgba(255,255,255,0.4)' }}>{ev.log_path?.split('/').pop() || 'system.log'}</div>
+                  
+                  <span className="text-[9px] font-bold font-mono uppercase w-[48px] text-center py-0.5 rounded shrink-0"
+                    style={{ 
+                      color: LEVEL_COLORS[entry.level] || 'rgba(255,255,255,0.35)', 
+                      background: `${LEVEL_COLORS[entry.level]}15`,
+                      border: `1px solid ${LEVEL_COLORS[entry.level]}30` 
+                    }}>
+                    {entry.level}
+                  </span>
+                  
+                  <span className="text-[10px] font-mono truncate w-[160px] shrink-0" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                    {entry.source}
+                  </span>
+                  
+                  <div className="text-xs flex-1 whitespace-pre-wrap break-words leading-relaxed" style={{ color: 'rgba(255,255,255,0.85)' }}>
+                    {entry.message}
                   </div>
-                  <span className="text-[10px] shrink-0" style={{ color: 'rgba(255,255,255,0.15)' }}>
-                    {ev.timestamp ? fmtMs(new Date(ev.timestamp).getTime()) : ''}
-                  </span>
                 </div>
                 
-                {isExpanded && ev.lines && ev.lines.length > 0 && (
-                  <div className="mt-2 p-3 rounded-lg bg-black/40 border border-white/5 overflow-x-auto" onClick={(e) => e.stopPropagation()}>
+                {isExpanded && (
+                  <div className="mt-2 p-3 rounded-lg bg-black/60 border border-white/5 overflow-x-auto ml-[134px]" onClick={(e) => e.stopPropagation()}>
+                    {entry.logPath && (
+                      <div className="text-[9px] font-mono mb-2" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                        File: {entry.logPath} | Day: {entry.day}
+                      </div>
+                    )}
                     <pre className="text-[10px] font-mono text-gray-300 whitespace-pre-wrap leading-relaxed">
-                      {ev.lines.map((l: any) => typeof l === 'string' ? l : JSON.stringify(l, null, 2)).join('\n')}
+                      {JSON.stringify(entry.raw, null, 2)}
                     </pre>
                   </div>
                 )}
@@ -1317,11 +1540,11 @@ export default function App() {
         zIndex: 0,
       }} />
 
-      <div className="relative z-10 flex flex-col min-h-screen">
+      <div className="relative z-10 flex flex-col h-screen">
         <Header connected={connected} messages={messages} />
         <TabBar tab={tab} setTab={setTab} />
 
-        <div className="flex-1 p-6">
+        <div className="flex-1 overflow-hidden p-4 sm:p-6">
           {tab === 'overview' && <OverviewTab messages={messages} />}
           {tab === 'tokens' && <TokensTab messages={messages} />}
           {tab === 'sessions' && <SessionsTab messages={messages} />}
