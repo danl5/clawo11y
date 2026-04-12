@@ -94,6 +94,7 @@ class SessionsEvent(Base):
     sessions = Column(JSON, default=list)
     session_count = Column(Integer, default=0)
     active_count = Column(Integer, default=0)
+    history_count = Column(Integer, default=0)
     timestamp = Column(DateTime(timezone=True), nullable=False)
 
 class GatewayLogEvent(Base):

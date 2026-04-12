@@ -22,7 +22,7 @@ const (
 func detectOpenClawDirs() (agentsBaseDir, cronPath, workspaceBaseDir, gatewayLogDir string) {
 	// Let user override via environment variable
 	baseDir := os.Getenv("OPENCLAW_BASE_DIR")
-	
+
 	if baseDir == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -173,43 +173,50 @@ func main() {
 				continue
 			}
 			ev.NodeID = nodeInfo.NodeID
-			if err := srvClient.SendWorkspaceEvent(toWorkspacePayload(ev)); err != nil {
-				log.Printf("Error sending workspace event: %v", err)
-			} else {
-				log.Printf("Workspace event: %s", ev.Type)
-			}
+			go func(e watcher.WorkspaceEvent) {
+				if err := srvClient.SendWorkspaceEvent(toWorkspacePayload(e)); err != nil {
+					log.Printf("Error sending workspace event: %v", err)
+				} else {
+					log.Printf("Workspace event: %s", e.Type)
+				}
+			}(ev)
 
 		case ev, ok := <-cronEventChan:
 			if !ok {
 				continue
 			}
 			ev.NodeID = nodeInfo.NodeID
-			if err := srvClient.SendCronEvent(toCronPayload(ev)); err != nil {
-				log.Printf("Error sending cron event: %v", err)
-			} else {
-				log.Printf("Cron event: %d jobs tracked", len(ev.Jobs))
-			}
+			go func(e watcher.CronEvent) {
+				if err := srvClient.SendCronEvent(toCronPayload(e)); err != nil {
+					log.Printf("Error sending cron event: %v", err)
+				} else {
+					log.Printf("Cron event: %d jobs tracked", len(e.Jobs))
+				}
+			}(ev)
 
 		case ev, ok := <-sessionsEventChan:
 			if !ok {
 				continue
 			}
 			ev.NodeID = nodeInfo.NodeID
-			if err := srvClient.SendSessionsEvent(toSessionsPayload(ev)); err != nil {
-				log.Printf("Error sending sessions event: %v", err)
-			} else {
-				log.Printf("Sessions: %d total, %d active",
-					ev.SessionCount, ev.ActiveCount)
-			}
+			go func(e watcher.SessionsEvent) {
+				if err := srvClient.SendSessionsEvent(toSessionsPayload(e)); err != nil {
+					log.Printf("Error sending sessions event: %v", err)
+				} else {
+					log.Printf("Sessions: %d total, %d active", e.SessionCount, e.ActiveCount)
+				}
+			}(ev)
 
 		case ev, ok := <-gatewayEventChan:
 			if !ok {
 				continue
 			}
 			ev.NodeID = nodeInfo.NodeID
-			if err := srvClient.SendGatewayLogEvent(toGatewayPayload(ev)); err != nil {
-				log.Printf("Error sending gateway log event: %v", err)
-			}
+			go func(e watcher.GatewayLogEvent) {
+				if err := srvClient.SendGatewayLogEvent(toGatewayPayload(e)); err != nil {
+					log.Printf("Error sending gateway log event: %v", err)
+				}
+			}(ev)
 
 		case sig := <-sigs:
 			log.Printf("Shutting down (signal: %s)...", sig)

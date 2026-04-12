@@ -16,6 +16,7 @@ async def report_sessions_event(payload: SessionsEventPayload, db: Session = Dep
             sessions=[s.model_dump() for s in payload.sessions],
             session_count=payload.session_count,
             active_count=payload.active_count,
+            history_count=payload.history_count,
             timestamp=payload.timestamp,
         )
         db.add(db_event)
@@ -31,6 +32,7 @@ async def report_sessions_event(payload: SessionsEventPayload, db: Session = Dep
             "event_type": payload.type,
             "session_count": payload.session_count,
             "active_count": payload.active_count,
+            "history_count": payload.history_count,
             "sessions": [s.model_dump() for s in payload.sessions],
             "timestamp": payload.timestamp.isoformat() if hasattr(payload.timestamp, 'isoformat') else str(payload.timestamp),
         })

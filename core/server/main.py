@@ -50,9 +50,12 @@ async def cleanup_old_data():
         # Run once a day
         await asyncio.sleep(86400)
 
+from core.server.routers.events import process_event_queue
+
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(cleanup_old_data())
+    asyncio.create_task(process_event_queue())
 # -----------------------------------
 
 app.add_middleware(

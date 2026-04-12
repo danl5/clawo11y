@@ -110,49 +110,49 @@ function ParticleBackground() {
 /* ── Header ── */
 function Header({ connected, messages }: { connected: boolean; messages: WsMessage[] }) {
   return (
-    <header className="relative z-10 flex items-center justify-between px-6 py-4"
+    <header className="relative z-10 flex flex-col sm:flex-row items-start sm:items-center justify-between px-4 sm:px-6 py-4 gap-4 sm:gap-0"
       style={{ background: 'rgba(10,15,30,0.7)', backdropFilter: 'blur(24px)', borderBottom: '1px solid rgba(255,255,255,0.05)', boxShadow: '0 4px 30px rgba(0,0,0,0.5)' }}>
-      <div className="flex items-center gap-4">
-        <div className="relative">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center animate-float shadow-lg border border-white/10"
+      <div className="flex items-center gap-3 sm:gap-4 w-full sm:w-auto">
+        <div className="relative shrink-0">
+          <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center animate-float shadow-lg border border-white/10"
             style={{ background: 'linear-gradient(135deg, #1e3a8a, #312e81, #831843)', backgroundSize: '200% 200%', animation: 'gradient-shift 4s ease infinite' }}>
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 sm:w-6 sm:h-6">
               <path stroke="#fb923c" d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
               <circle fill="#f472b6" stroke="#f472b6" cx="12" cy="12" r="3"/>
               <path stroke="#60a5fa" d="M12 2v2M12 20v2M22 12h-2M4 12H2M4.9 4.9l1.4 1.4M17.7 19.1l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 19.1l-1.4 1.4"/>
             </svg>
           </div>
-          <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-[#0a0f1e] animate-breathe"
+          <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full border-2 border-[#0a0f1e] animate-breathe"
             style={{ background: connected ? '#10b981' : '#ef4444', boxShadow: `0 0 8px ${connected ? '#10b981' : '#ef4444'}` }} />
         </div>
-        <div>
-          <h1 className="text-base font-extrabold tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 drop-shadow-md">
+        <div className="flex-1">
+          <h1 className="text-sm sm:text-base font-extrabold tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 drop-shadow-md truncate">
             OpenClaw Observability
           </h1>
           <div className="flex items-center gap-2 mt-0.5">
             {connected ? (
-              <span className="inline-flex items-center gap-1.5 text-[10px] font-mono tracking-widest text-emerald-400/80 uppercase">
+              <span className="inline-flex items-center gap-1.5 text-[9px] sm:text-[10px] font-mono tracking-widest text-emerald-400/80 uppercase">
                 <span className="w-1.5 h-1.5 rounded-full animate-pulse bg-emerald-400 shadow-[0_0_8px_#34d399]" />
-                Live Telemetry
+                Live
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1.5 text-[10px] font-mono tracking-widest text-red-400/80 uppercase">
+              <span className="inline-flex items-center gap-1.5 text-[9px] sm:text-[10px] font-mono tracking-widest text-red-400/80 uppercase">
                 <span className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_8px_#ef4444]" />
-                Disconnected
+                Offline
               </span>
             )}
           </div>
         </div>
       </div>
 
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-mono"
+      <div className="flex items-center gap-3 sm:gap-4 w-full sm:w-auto justify-between sm:justify-end">
+        <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 rounded-lg text-xs font-mono w-full sm:w-auto justify-between sm:justify-start"
           style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.05)', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)' }}>
           <span style={{ color: 'rgba(255,255,255,0.3)' }}>EVENTS</span>
           <span className="font-bold" style={{ color: '#60a5fa' }}>{messages.length.toLocaleString()}</span>
         </div>
-        <div className="w-px h-5" style={{ background: 'rgba(255,255,255,0.1)' }} />
-        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono"
+        <div className="hidden sm:block w-px h-5" style={{ background: 'rgba(255,255,255,0.1)' }} />
+        <div className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-xs font-mono shrink-0"
           style={{ background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.2)' }}>
           <span style={{ color: '#60a5fa' }}>v1.0</span>
         </div>
@@ -169,12 +169,12 @@ const TAB_ICONS: Record<string, string> = {
 
 function TabBar({ tab, setTab }: { tab: string; setTab: (t: typeof TABS[number]) => void }) {
   return (
-    <div className="relative z-10 flex gap-1 px-6 pt-4">
-      <div className="flex gap-1 px-1 py-1 rounded-2xl"
+    <div className="relative z-10 flex gap-1 px-4 sm:px-6 pt-4 overflow-x-auto scrollbar-none pb-2 -mb-2">
+      <div className="flex gap-1 px-1 py-1 rounded-2xl min-w-max"
         style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', backdropFilter: 'blur(12px)' }}>
         {TABS.map(t => (
           <button key={t} onClick={() => setTab(t)}
-            className="tab-btn flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-medium capitalize transition-all duration-200"
+            className="tab-btn flex items-center gap-1.5 px-3 sm:px-4 py-1.5 rounded-xl text-xs font-medium capitalize transition-all duration-200 shrink-0"
             style={{
               background: tab === t
                 ? 'linear-gradient(135deg, rgba(59,130,246,0.25), rgba(139,92,246,0.25))'
@@ -282,13 +282,13 @@ function OverviewTab({ messages }: any) {
       </div>
 
       {healthSnapshots.length > 0 && (
-        <div className="glass-card p-5">
-          <div className="flex items-center justify-between mb-4">
+        <div className="glass-card p-4 sm:p-5">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-3 sm:gap-0">
             <h3 className="text-sm font-medium" style={{ color: 'rgba(255,255,255,0.6)' }}>
               <span className="inline-block w-2 h-2 rounded-full mr-2 animate-breathe" style={{ background: '#fb923c' }} />
               System Health — 24h
             </h3>
-            <div className="flex gap-4 text-xs">
+            <div className="flex flex-wrap gap-3 sm:gap-4 text-[10px] sm:text-xs">
               {[{ color: '#fb923c', label: 'CPU' }, { color: '#3b82f6', label: 'RAM' }, { color: '#34d399', label: 'Disk' }].map(({ color, label }) => (
                 <div key={label} className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-sm" style={{ background: color, boxShadow: `0 0 4px ${color}` }} />
@@ -297,24 +297,26 @@ function OverviewTab({ messages }: any) {
               ))}
             </div>
           </div>
-          <ResponsiveContainer width="100%" height={130}>
-            <LineChart data={healthSnapshots}>
-              <defs>
-                <linearGradient id="cpuGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#fb923c" stopOpacity={0.3} />
-                  <stop offset="100%" stopColor="#fb923c" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-              <XAxis dataKey="ts" tick={{ fontSize: 9, fill: 'rgba(255,255,255,0.25)' }}
-                tickFormatter={(v: number) => fmtTs(v)} />
-              <YAxis tick={{ fontSize: 9, fill: 'rgba(255,255,255,0.25)' }} domain={[0, 100]} />
-              <Tooltip contentStyle={{ background: '#0a0f1e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11, color: 'white' }} />
-              <Area type="monotone" dataKey="cpu" stroke="#fb923c" fill="url(#cpuGrad)" strokeWidth={2} isAnimationActive={false} />
-              <Line type="monotone" dataKey="ram" stroke="#3b82f6" dot={false} strokeWidth={2} isAnimationActive={false} />
-              <Line type="monotone" dataKey="disk" stroke="#34d399" dot={false} strokeWidth={1} strokeOpacity={0.5} isAnimationActive={false} />
-            </LineChart>
-          </ResponsiveContainer>
+          <div className="-ml-4 sm:ml-0">
+            <ResponsiveContainer width="100%" height={150}>
+              <LineChart data={healthSnapshots}>
+                <defs>
+                  <linearGradient id="cpuGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#fb923c" stopOpacity={0.3} />
+                    <stop offset="100%" stopColor="#fb923c" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                <XAxis dataKey="ts" tick={{ fontSize: 9, fill: 'rgba(255,255,255,0.25)' }}
+                  tickFormatter={(v: number) => fmtTs(v)} />
+                <YAxis tick={{ fontSize: 9, fill: 'rgba(255,255,255,0.25)' }} domain={[0, 100]} width={30} />
+                <Tooltip contentStyle={{ background: '#0a0f1e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11, color: 'white' }} />
+                <Area type="monotone" dataKey="cpu" stroke="#fb923c" fill="url(#cpuGrad)" strokeWidth={2} isAnimationActive={false} />
+                <Line type="monotone" dataKey="ram" stroke="#3b82f6" dot={false} strokeWidth={2} isAnimationActive={false} />
+                <Line type="monotone" dataKey="disk" stroke="#34d399" dot={false} strokeWidth={1} strokeOpacity={0.5} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       )}
 
@@ -325,31 +327,31 @@ function OverviewTab({ messages }: any) {
           </h3>
           <div className="space-y-1.5">
             {tokenMsgs.slice(0, 8).map((m: WsMessage, i: number) => (
-              <div key={i} className="flex items-center justify-between py-2 px-3 rounded-xl transition-all hover:bg-white/[0.03]"
+              <div key={i} className="flex flex-col sm:flex-row items-start sm:items-center justify-between py-3 sm:py-2 px-3 gap-2 sm:gap-0 rounded-xl transition-all hover:bg-white/[0.03]"
                 style={{ animationDelay: `${i * 40}ms` }}>
-                <div className="flex items-center gap-3">
-                  <span className="text-[10px] px-2 py-0.5 rounded-md font-mono"
+                <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">
+                  <span className="text-[10px] px-2 py-0.5 rounded-md font-mono shrink-0"
                     style={{ background: 'rgba(52,211,153,0.1)', color: '#34d399', border: '1px solid rgba(52,211,153,0.15)' }}>
                     {m.model?.split('/').pop() || '—'}
                   </span>
-                  <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.25)' }}>
+                  <span className="text-[10px] hidden sm:inline" style={{ color: 'rgba(255,255,255,0.25)' }}>
                     {m.session_id?.slice(0, 8)}...
                   </span>
                   {m.tool_name && (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded-md border border-yellow-500/20" style={{ background: 'rgba(250,204,21,0.1)', color: '#facc15' }}>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-md border border-yellow-500/20 truncate max-w-[120px] sm:max-w-none" style={{ background: 'rgba(250,204,21,0.1)', color: '#facc15' }}>
                       {m.tool_name}
                     </span>
                   )}
                   {m.provider && (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(167,139,250,0.1)', color: 'rgba(167,139,250,0.5)' }}>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-md shrink-0" style={{ background: 'rgba(167,139,250,0.1)', color: 'rgba(167,139,250,0.5)' }}>
                       {m.provider}
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-4 text-xs font-mono">
-                  <span style={{ color: '#60a5fa' }}>{(m.input_tokens || 0).toLocaleString()}</span>
-                  <span style={{ color: '#34d399' }}>{(m.output_tokens || 0).toLocaleString()}</span>
-                  <span style={{ color: '#fb923c' }}>${(m.cost_usd || 0).toFixed(6)}</span>
+                <div className="flex items-center gap-3 sm:gap-4 text-xs font-mono w-full sm:w-auto justify-between sm:justify-end bg-black/20 sm:bg-transparent p-2 sm:p-0 rounded-lg sm:rounded-none mt-1 sm:mt-0">
+                  <span style={{ color: '#60a5fa' }} title="Input Tokens">I: {(m.input_tokens || 0).toLocaleString()}</span>
+                  <span style={{ color: '#34d399' }} title="Output Tokens">O: {(m.output_tokens || 0).toLocaleString()}</span>
+                  <span style={{ color: '#fb923c' }} className="font-bold">${(m.cost_usd || 0).toFixed(6)}</span>
                 </div>
               </div>
             ))}
@@ -441,22 +443,22 @@ function TokensTab({ messages }: any) {
           </div>
         </div>
 
-        <div className="glass-card p-5 overflow-y-auto max-h-[415px] scrollbar-none">
-          <h3 className="text-sm font-medium mb-4" style={{ color: 'rgba(255,255,255,0.6)' }}>Cost Breakdown by Skill</h3>
-          <div className="space-y-3">
+        <div className="glass-card p-4 sm:p-5 flex flex-col h-[280px] sm:h-[415px]">
+          <h3 className="text-sm font-medium mb-4 shrink-0" style={{ color: 'rgba(255,255,255,0.6)' }}>Cost Breakdown by Skill</h3>
+          <div className="flex-1 overflow-y-auto scrollbar-thin space-y-3 pr-2">
             {skillStats.map((skill, i) => (
-              <div key={i} className="p-3 rounded-xl bg-white/[0.02] border border-white/5">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-xs font-bold" style={{ color: skill.name === '— (No Skill)' ? 'rgba(255,255,255,0.3)' : '#facc15' }}>
+              <div key={i} className="p-3 rounded-xl bg-white/[0.02] border border-white/5 transition-all hover:bg-white/[0.04]">
+                <div className="flex items-center justify-between mb-2 gap-2">
+                  <div className="text-[10px] sm:text-xs font-bold px-2 py-1 rounded-md truncate max-w-[150px] sm:max-w-[200px]" style={{ background: skill.name === '— (No Skill)' ? 'rgba(255,255,255,0.05)' : 'rgba(250,204,21,0.1)', color: skill.name === '— (No Skill)' ? 'rgba(255,255,255,0.5)' : '#facc15' }}>
                     {skill.name}
                   </div>
-                  <div className="text-xs font-mono" style={{ color: '#fb923c' }}>
+                  <div className="text-xs sm:text-sm font-mono shrink-0" style={{ color: '#fb923c' }}>
                     ${skill.cost.toFixed(6)}
                   </div>
                 </div>
-                <div className="flex items-center justify-between text-[10px] font-mono" style={{ color: 'rgba(255,255,255,0.4)' }}>
-                  <span>{skill.calls} invocations</span>
-                  <div className="flex gap-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-0 text-[10px] font-mono" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                  <span className="uppercase tracking-wider">{skill.calls} calls</span>
+                  <div className="flex gap-3">
                     <span style={{ color: '#60a5fa' }}>in: {skill.input.toLocaleString()}</span>
                     <span style={{ color: '#34d399' }}>out: {skill.output.toLocaleString()}</span>
                   </div>
@@ -477,53 +479,131 @@ const AGENT_COLORS: Record<string, string> = {
   'feishu-claw': '#f472b6',
 };
 
+function timelineEventSignature(ev: Pick<TimelineEvent, 'event_type' | 'timestamp' | 'tool_name' | 'model' | 'provider' | 'input_tokens' | 'output_tokens' | 'cache_read_tokens' | 'cache_write_tokens' | 'cost_usd' | 'duration_ms' | 'content'>) {
+  return JSON.stringify([
+    ev.event_type || '',
+    ev.timestamp || '',
+    ev.tool_name || '',
+    ev.model || '',
+    ev.provider || '',
+    ev.input_tokens || 0,
+    ev.output_tokens || 0,
+    ev.cache_read_tokens || 0,
+    ev.cache_write_tokens || 0,
+    ev.cost_usd || 0,
+    ev.duration_ms || 0,
+    ev.content || null,
+  ]);
+}
+
+function wsMessageToTimelineEvent(msg: WsMessage): TimelineEvent {
+  return {
+    id: `live:${msg.session_id || 'unknown'}:${msg.timestamp || ''}:${msg.event_type || ''}:${msg.tool_name || ''}`,
+    event_type: msg.event_type || '',
+    model: msg.model,
+    provider: msg.provider,
+    input_tokens: msg.input_tokens || 0,
+    output_tokens: msg.output_tokens || 0,
+    cache_read_tokens: msg.cache_read_tokens || 0,
+    cache_write_tokens: msg.cache_write_tokens || 0,
+    cost_usd: msg.cost_usd || 0,
+    duration_ms: msg.duration_ms || 0,
+    tool_name: msg.tool_name,
+    content: msg.content,
+    timestamp: msg.timestamp,
+  };
+}
+
 function SessionsTab({ messages }: { messages: WsMessage[] }) {
   const [activeAgent, setActiveAgent] = useState<string>('all');
-  const [sessionsMap, setSessionsMap] = useState<Record<string, { sessionId: string; label?: string; model?: string; agent_name?: string; channel?: string }[]>>({});
+  const [activeView, setActiveView] = useState<'active' | 'history'>('active');
+  const [sessionsMap, setSessionsMap] = useState<Record<string, { key: string; sessionId: string; label?: string; model?: string; agent_name?: string; channel?: string; status?: string; is_history?: boolean; updated_at?: number }[]>>({});
   const [activeId, setActiveId] = useState<string | null>(null);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [filterType, setFilterType] = useState<string>('all');
 
+  const isHistorySession = useCallback((session: { key: string; status?: string; is_history?: boolean }) => {
+    if (session.is_history === true) return true;
+    if (session.status === 'reset' || session.status === 'deleted') return true;
+    if (session.key.includes('.reset.') || session.key.includes('.deleted.') || session.key.includes('.delete.')) return true;
+    return false;
+  }, []);
+
   useEffect(() => {
-    const latest = messages.filter((m: WsMessage) => m.type === 'sessions_event').pop();
+    const latest = messages.find((m: WsMessage) => m.type === 'sessions_event');
     if (!latest?.sessions) return;
     const byAgent: Record<string, any[]> = {};
     for (const s of latest.sessions) {
       const agent = s.agent_name || 'main';
       if (!byAgent[agent]) byAgent[agent] = [];
-      byAgent[agent].push({ sessionId: s.sessionId, label: s.label, model: s.model, agent_name: agent, channel: s.channel });
+      byAgent[agent].push({ 
+        key: s.key,
+        sessionId: s.sessionId, 
+        label: s.label, 
+        model: s.model, 
+        agent_name: agent, 
+        channel: s.channel,
+        status: s.status,
+        is_history: s.is_history,
+        updated_at: s.last_active_ms || s.created_at_ms || 0
+      });
+    }
+    // Sort sessions by update time descending
+    for (const agent in byAgent) {
+      byAgent[agent].sort((a, b) => b.updated_at - a.updated_at);
     }
     setSessionsMap(byAgent);
   }, [messages]);
 
   const agentNames = Object.keys(sessionsMap).sort();
   const displayAgents = activeAgent === 'all' ? agentNames : [activeAgent];
-  const displaySessions = displayAgents.flatMap(a => sessionsMap[a] || []);
+  
+  const allDisplaySessions = displayAgents.flatMap(a => sessionsMap[a] || []);
+  const activeSessions = allDisplaySessions.filter(s => !isHistorySession(s));
+  const historySessions = allDisplaySessions.filter(s => isHistorySession(s));
+  
+  const displaySessions = activeView === 'active' ? activeSessions : historySessions;
 
-  const loadTimeline = useCallback((sessionId: string) => {
-    setActiveId(sessionId); setLoading(true);
-    const host = import.meta.env.DEV ? 'http://localhost:8000' : '';
+  const loadTimeline = useCallback((sessionKey: string, sessionId: string) => {
+    setActiveId(sessionKey); setLoading(true);
+    const host = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
     fetch(`${host}/api/v1/timeline/${encodeURIComponent(sessionId)}/timeline`)
       .then(r => r.json()).then(data => { setTimeline(Array.isArray(data) ? data : []); setLoading(false); })
       .catch(() => { setTimeline([]); setLoading(false); });
   }, []);
 
   useEffect(() => {
-    if (displaySessions.length > 0 && !activeId) loadTimeline(displaySessions[0].sessionId);
+    if (displaySessions.length > 0 && !activeId) loadTimeline(displaySessions[0].key, displaySessions[0].sessionId);
   }, [displaySessions, activeId, loadTimeline]);
 
-  const activeSession = displaySessions.find(s => s.sessionId === activeId);
+  const activeSession = displaySessions.find(s => s.key === activeId);
   const agentColor = activeSession?.agent_name ? (AGENT_COLORS[activeSession.agent_name] || '#6b7280') : '#6b7280';
 
+  useEffect(() => {
+    const latest = messages[0];
+    if (!activeSession || !latest || latest.type !== 'agent_event') return;
+    if (latest.session_id !== activeSession.sessionId) return;
+
+    const incomingEvent = wsMessageToTimelineEvent(latest);
+    const incomingSignature = timelineEventSignature(incomingEvent);
+
+    setTimeline(prev => {
+      if (prev.some(ev => timelineEventSignature(ev) === incomingSignature)) {
+        return prev;
+      }
+      return [...prev, incomingEvent];
+    });
+  }, [messages, activeSession]);
+
   return (
-    <div className="flex gap-4 h-[calc(100vh-220px)] animate-fade-up">
-      <div className="w-72 shrink-0 glass-card p-4 overflow-y-auto scrollbar-thin flex flex-col gap-3">
+    <div className="flex flex-col md:flex-row gap-4 h-[calc(100vh-220px)] md:h-[calc(100vh-200px)] animate-fade-up w-full">
+      <div className={`${activeId ? 'hidden md:flex' : 'flex'} w-full md:w-72 shrink-0 glass-card p-4 flex-col gap-3 h-full overflow-hidden`}>
         {agentNames.length > 1 && (
-          <div className="flex gap-1 px-1 py-1 rounded-xl" style={{ background: 'rgba(255,255,255,0.03)' }}>
+          <div className="flex gap-1 px-1 py-1 rounded-xl overflow-x-auto scrollbar-none shrink-0 w-full" style={{ background: 'rgba(255,255,255,0.03)' }}>
             {['all', ...agentNames].map(a => (
               <button key={a} onClick={() => setActiveAgent(a)}
-                className="flex-1 text-[9px] py-1 rounded-lg capitalize transition-all"
+                className="flex-1 min-w-max text-[9px] py-1 px-3 rounded-lg capitalize transition-all"
                 style={{
                   background: activeAgent === a ? 'rgba(99,132,246,0.2)' : 'transparent',
                   color: activeAgent === a ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.3)',
@@ -535,21 +615,38 @@ function SessionsTab({ messages }: { messages: WsMessage[] }) {
           </div>
         )}
 
-        <div className="text-[10px] uppercase tracking-widest px-1" style={{ color: 'rgba(255,255,255,0.2)' }}>
-          {displaySessions.length} sessions
+        <div className="flex gap-2 px-1 shrink-0">
+          <button onClick={() => { setActiveView('active'); setActiveId(null); }}
+            className="flex-1 py-1.5 rounded-lg text-[10px] uppercase tracking-wider font-bold transition-all"
+            style={{
+              background: activeView === 'active' ? 'rgba(52,211,153,0.1)' : 'transparent',
+              color: activeView === 'active' ? '#34d399' : 'rgba(255,255,255,0.3)',
+              border: activeView === 'active' ? '1px solid rgba(52,211,153,0.2)' : '1px solid transparent'
+            }}>
+            Active ({activeSessions.length})
+          </button>
+          <button onClick={() => { setActiveView('history'); setActiveId(null); }}
+            className="flex-1 py-1.5 rounded-lg text-[10px] uppercase tracking-wider font-bold transition-all"
+            style={{
+              background: activeView === 'history' ? 'rgba(255,255,255,0.05)' : 'transparent',
+              color: activeView === 'history' ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.3)',
+              border: activeView === 'history' ? '1px solid rgba(255,255,255,0.1)' : '1px solid transparent'
+            }}>
+            History ({historySessions.length})
+          </button>
         </div>
 
-        <div className="space-y-1">
+        <div className="space-y-1 overflow-y-auto scrollbar-thin pr-1 flex-1">
           {displaySessions.map((s, i) => (
-            <button key={s.sessionId} onClick={() => loadTimeline(s.sessionId)}
+            <button key={s.key} onClick={() => loadTimeline(s.key, s.sessionId)}
               className="w-full text-left p-3 rounded-xl transition-all duration-200 animate-slide-in"
               style={{
                 animationDelay: `${i * 20}ms`,
-                background: activeId === s.sessionId
+                background: activeId === s.key
                   ? 'linear-gradient(135deg, rgba(59,130,246,0.15), rgba(139,92,246,0.15))'
                   : 'rgba(255,255,255,0.02)',
-                border: `1px solid ${activeId === s.sessionId ? 'rgba(99,132,246,0.3)' : 'rgba(255,255,255,0.05)'}`,
-                boxShadow: activeId === s.sessionId ? '0 0 12px rgba(59,130,246,0.1)' : 'none',
+                border: `1px solid ${activeId === s.key ? 'rgba(99,132,246,0.3)' : 'rgba(255,255,255,0.05)'}`,
+                boxShadow: activeId === s.key ? '0 0 12px rgba(59,130,246,0.1)' : 'none',
               }}>
               <div className="flex items-center gap-1.5 mb-1.5">
                 {s.agent_name && (
@@ -558,7 +655,7 @@ function SessionsTab({ messages }: { messages: WsMessage[] }) {
                     {s.agent_name}
                   </span>
                 )}
-                <div className="text-xs font-mono truncate flex-1" style={{ color: activeId === s.sessionId ? 'white' : 'rgba(255,255,255,0.55)' }}>
+                <div className="text-xs font-mono truncate flex-1" style={{ color: activeId === s.key ? 'white' : 'rgba(255,255,255,0.55)' }}>
                   {s.sessionId}
                 </div>
               </div>
@@ -576,17 +673,20 @@ function SessionsTab({ messages }: { messages: WsMessage[] }) {
         </div>
       </div>
 
-      <div className="flex-1 glass-card p-5 flex flex-col overflow-hidden">
+      <div className={`${!activeId ? 'hidden md:flex' : 'flex'} flex-1 glass-card p-3 sm:p-5 flex-col overflow-hidden h-full`}>
         {activeSession && (
-          <div className="flex items-center justify-between gap-4 px-4 py-2.5 mb-4 rounded-xl shrink-0"
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 px-3 sm:px-4 py-2.5 mb-4 rounded-xl shrink-0"
             style={{ background: 'rgba(255,255,255,0.03)', border: `1px solid ${agentColor}20` }}>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider">Agent</span>
-              <span className="text-sm font-semibold capitalize" style={{ color: agentColor }}>{activeSession.agent_name}</span>
-              <span className="text-[10px] px-2 py-0.5 rounded-md font-mono" style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.35)' }}>{activeSession.sessionId}</span>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <button onClick={() => setActiveId(null)} className="md:hidden mr-2 p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+              </button>
+              <span className="text-[10px] font-bold uppercase tracking-wider hidden sm:inline">Agent</span>
+              <span className="text-sm font-semibold capitalize truncate max-w-[80px] sm:max-w-none" style={{ color: agentColor }}>{activeSession.agent_name}</span>
+              <span className="text-[10px] px-2 py-0.5 rounded-md font-mono truncate flex-1 sm:max-w-[200px]" style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.35)' }}>{activeSession.sessionId}</span>
             </div>
             
-            <div className="flex items-center gap-1 bg-black/40 rounded-lg p-1 border border-white/5">
+            <div className="flex items-center gap-1 bg-black/40 rounded-lg p-1 border border-white/5 overflow-x-auto w-full sm:w-auto scrollbar-none">
               {[
                 { id: 'all', label: 'All', icon: '📋' },
                 { id: 'message', label: 'Messages', icon: '🗣' },
@@ -594,9 +694,10 @@ function SessionsTab({ messages }: { messages: WsMessage[] }) {
                 { id: 'token_usage', label: 'Tokens', icon: '📊' }
               ].map(f => (
                 <button key={f.id} onClick={() => setFilterType(f.id)}
-                  className={`text-[10px] px-2.5 py-1 rounded-md transition-all font-medium flex items-center gap-1 ${filterType === f.id ? 'bg-white/10 text-white shadow-sm' : 'text-white/40 hover:text-white/70 hover:bg-white/5'}`}>
+                  className={`text-[10px] px-2.5 py-1 rounded-md transition-all font-medium flex items-center gap-1 shrink-0 ${filterType === f.id ? 'bg-white/10 text-white shadow-sm' : 'text-white/40 hover:text-white/70 hover:bg-white/5'}`}>
                   <span>{f.icon}</span>
-                  {f.label}
+                  <span className="hidden sm:inline">{f.label}</span>
+                  <span className="sm:hidden">{f.label.slice(0, 3)}</span>
                 </button>
               ))}
             </div>
@@ -965,27 +1066,27 @@ function CronTab({ messages }: { messages: WsMessage[] }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-up">
       {jobs.map((j: any, i: number) => (
-        <div key={j.id || i} onClick={() => setSelectedJob(j)} className="glass-card p-5 cursor-pointer transition-all duration-300 hover:scale-[1.01]"
+        <div key={j.id || i} onClick={() => setSelectedJob(j)} className="glass-card p-4 sm:p-5 cursor-pointer transition-all duration-300 hover:scale-[1.01]"
           style={{ animationDelay: `${i * 60}ms`, borderColor: j.enabled ? 'rgba(52,211,153,0.2)' : 'rgba(255,255,255,0.06)' }}>
-          <div className="flex items-start justify-between mb-3">
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between mb-3 gap-2 sm:gap-0">
             <div>
-              <div className="text-sm font-medium mb-0.5">{j.name || j.id}</div>
-              <code className="text-xs font-mono" style={{ color: '#60a5fa' }}>
+              <div className="text-sm font-medium mb-0.5 truncate max-w-[200px] sm:max-w-none">{j.name || j.id}</div>
+              <code className="text-[10px] sm:text-xs font-mono break-all" style={{ color: '#60a5fa' }}>
                 {typeof j.schedule === 'string' ? j.schedule : (j.schedule?.expr || JSON.stringify(j.schedule))}
               </code>
             </div>
-            <span className="text-xs px-2 py-0.5 rounded-full font-medium"
+            <span className="text-[10px] sm:text-xs px-2 py-0.5 rounded-full font-medium w-fit shrink-0"
               style={{ background: j.enabled ? 'rgba(52,211,153,0.12)' : 'rgba(255,255,255,0.05)', color: j.enabled ? '#34d399' : 'rgba(255,255,255,0.3)', border: `1px solid ${j.enabled ? 'rgba(52,211,153,0.2)' : 'rgba(255,255,255,0.08)'}` }}>
               {j.enabled ? 'active' : 'paused'}
             </span>
           </div>
-          <div className="grid grid-cols-3 gap-2 text-xs">
+          <div className="grid grid-cols-3 gap-2 text-[10px] sm:text-xs">
             {[{ label: 'Runs', value: j.run_count || 0, color: 'rgba(255,255,255,0.6)' },
               { label: 'Errors', value: j.error_count || 0, color: j.error_count > 0 ? '#f87171' : 'rgba(255,255,255,0.6)' },
               { label: 'Next', value: j.next_run_ms > 0 ? new Date(j.next_run_ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—', color: '#fb923c' }].map(({ label, value, color }) => (
-              <div key={label} className="text-center p-2 rounded-xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                <div className="text-sm font-bold" style={{ color }}>{value}</div>
-                <div className="text-[10px] mt-0.5" style={{ color: 'rgba(255,255,255,0.25)' }}>{label}</div>
+              <div key={label} className="text-center p-2 rounded-xl flex flex-col justify-center" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="text-xs sm:text-sm font-bold truncate" style={{ color }}>{value}</div>
+                <div className="text-[9px] sm:text-[10px] mt-0.5" style={{ color: 'rgba(255,255,255,0.25)' }}>{label}</div>
               </div>
             ))}
           </div>

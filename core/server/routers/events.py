@@ -1,11 +1,60 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from core.server.database import get_db
+from core.server.database import get_db, SessionLocal
 from core.server.models import AgentEvent, SystemMetric, SessionsEvent, WorkspaceEvent, CronEvent, GatewayLogEvent
 from core.server.websocket_manager import manager
 from core.shared.schemas import AgentEventPayload
 
 router = APIRouter()
+
+import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
+
+# --- Event Queue for Batch Insert ---
+# This prevents SQLite from locking up during high concurrency (e.g. Agent restart)
+event_queue = asyncio.Queue()
+
+async def process_event_queue():
+    """Background task that takes events from the queue and inserts them in batches."""
+    batch = []
+    batch_size = 50
+    
+    while True:
+        try:
+            # Wait for at least one item
+            item = await event_queue.get()
+            batch.append(item)
+            
+            # Try to grab more items immediately available, up to batch_size
+            while len(batch) < batch_size and not event_queue.empty():
+                batch.append(event_queue.get_nowait())
+                
+            # Perform bulk insert
+            if batch:
+                db = SessionLocal()
+                try:
+                    db.bulk_save_objects(batch)
+                    db.commit()
+                except Exception as e:
+                    db.rollback()
+                    logger.error(f"Bulk insert failed: {e}")
+                finally:
+                    db.close()
+                    
+                # Mark tasks as done
+                for _ in range(len(batch)):
+                    event_queue.task_done()
+                batch.clear()
+                
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Queue processor error: {e}")
+            await asyncio.sleep(1)
+
+# -----------------------------------
 
 @router.get("/snapshot")
 def get_snapshot(db: Session = Depends(get_db)):
@@ -78,7 +127,7 @@ def get_snapshot(db: Session = Depends(get_db)):
     return {"messages": events}
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
-async def report_event(payload: AgentEventPayload, db: Session = Depends(get_db)):
+async def report_event(payload: AgentEventPayload):
     try:
         db_event = AgentEvent(
             node_id=payload.node_id,
@@ -97,10 +146,11 @@ async def report_event(payload: AgentEventPayload, db: Session = Depends(get_db)
             tool_name=payload.tool_name,
             channel=payload.channel,
         )
-        db.add(db_event)
-        db.commit()
+        
+        # Enqueue the event for background bulk insertion
+        await event_queue.put(db_event)
+        
     except Exception as e:
-        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
     try:

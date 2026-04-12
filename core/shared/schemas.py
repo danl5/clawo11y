@@ -110,6 +110,7 @@ class SessionEntry(BaseModel):
     cost_usd: float = 0.0
     agent_name: Optional[str] = None
     channel: Optional[str] = None
+    is_history: bool = False
 
 class SessionsEventPayload(BaseModel):
     node_id: str
@@ -117,6 +118,7 @@ class SessionsEventPayload(BaseModel):
     sessions: List[SessionEntry] = Field(default_factory=list)
     session_count: int = 0
     active_count: int = 0
+    history_count: int = 0
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 class GatewayLogEventPayload(BaseModel):
