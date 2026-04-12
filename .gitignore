@@ -208,3 +208,5 @@ Thumbs.db
 # Project specific
 data/
 refer/
+.bin/
+/bin
