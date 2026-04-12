@@ -159,4 +159,32 @@ go run .
 - **Cron Runs**: The Go Agent parses the latest 5,000 runs per job directly from `.jsonl` files on startup, ensuring you never lose context after a reboot.
 
 ---
+
+## 🗺️ Roadmap & Future Vision
+
+OpenClaw O11y is evolving from a simple "file viewer" into an enterprise-grade AI asset management and observability platform. Here is our strategic roadmap:
+
+### Phase 1: Deep Tracing via OpenTelemetry (OTel)
+**Goal:** Solve the "black box" problem of complex Agent cascades, nested tool executions, and concurrent thought processes.
+- **Architecture Shift:** Upgrade the FastAPI Server to act as a lightweight OTLP receiver, moving away from relying solely on the Go Agent to parse local `.jsonl` files.
+- **Implementation:** Introduce `opentelemetry-sdk` to accept standard OTel Spans pushed directly by OpenClaw.
+- **UI Upgrade:** Build a Jaeger/Zipkin-style Trace detail page. Render millisecond-accurate Gantt charts/waterfall views based on `TraceID` and `ParentSpanID` to pinpoint exactly where an LLM stalled or hallucinated.
+
+### Phase 2: Fleet Management & Business Intelligence (BI)
+**Goal:** Break the limitations of single-node, short-lived monitoring to provide long-term cost settlement and multi-node isolation for enterprise teams.
+- **Tagging System:** Ensure all reported telemetry data carries strong business attributes (e.g., `Cluster=prod`, `Service=customer_bot`).
+- **Data Aggregation:** Leverage the SQLite/PostgreSQL backend to perform long-term aggregations (daily, per model, per cluster).
+- **BI Dashboards:** Create dedicated reporting views:
+  - **Cost Dashboard:** 30-day API spend trends across different clusters.
+  - **Tool ROI:** Rankings of tool invocation success rates and latencies to identify inefficient tools.
+  - **Global Health Map:** A topology or grid view showing the live status of all nodes in the fleet.
+
+### Phase 3: Proactive Alerting & Cost Intervention
+**Goal:** Shift from passively "looking at charts" to proactively notifying the team, preventing issues before they escalate.
+- **Lightweight Rule Engine:** Define simple thresholds via an `alerts.yaml` configuration file (e.g., `condition: error_logs > 100 in 5m` or `condition: cost_usd > 10 in 1h`).
+- **Background Patrol:** Implement asynchronous background tasks in the FastAPI server to continuously evaluate rules against the database.
+- **Notification Pipelines:** Trigger simple Webhooks to push alert messages to Slack, Microsoft Teams, Discord, or email when thresholds are breached.
+
+---
+
 *Happy observing. May your cache hit rates be high and your hallucinations be low.* <img src="web/public/favicon.svg" width="16" height="16" alt="O11y" style="vertical-align: middle;">
