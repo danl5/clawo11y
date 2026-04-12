@@ -1,10 +1,10 @@
-# <img src="web/public/favicon.svg" width="32" height="32" alt="OpenClaw O11y Logo" style="vertical-align: middle;"> OpenClaw O11y (Observability)
+# <img src="services/web/public/favicon.svg" width="32" height="32" alt="OpenClaw O11y Logo" style="vertical-align: middle;"> OpenClaw O11y (Observability)
 
 Welcome to **OpenClaw O11y** — the telemetry dashboard for your OpenClaw AI Agents. 
 
 Stop SSH-ing into your VMs just to `tail -f` a `.jsonl` file. Stop guessing how many tokens your latest prompt burned. OpenClaw O11y gives you a real-time, cyberpunk-styled window directly into the "brains" of your AI workforce. 
 
-![OpenClaw O11y Dashboard Overview](web/public/overview.png)
+![OpenClaw O11y Dashboard Overview](services/web/public/overview.png)
 
 ---
 
@@ -24,8 +24,8 @@ Stop SSH-ing into your VMs just to `tail -f` a `.jsonl` file. Stop guessing how 
 O11y isn't a monolith; it's designed to be distributed. It consists of three parts:
 
 1. **The Probe (`clawo11y-agent`)**: A lightweight, blazing-fast Go binary that lives on your Agent's host machine. It uses `fsnotify` to watch file changes and pushes data up.
-2. **The Brain (`core.server`)**: A Python FastAPI server backed by SQLite. It aggregates data from multiple probes and broadcasts it via WebSockets.
-3. **The Glass (`web`)**: A React/Vite frontend bathed in Tailwind CSS glassmorphism and neon gradients.
+2. **The Brain (`services/server`)**: A high-performance Golang Gin server backed by SQLite. It aggregates data from multiple probes and broadcasts it via WebSockets.
+3. **The Glass (`services/web`)**: A React/Vite frontend bathed in Tailwind CSS glassmorphism and neon gradients.
 
 ---
 
@@ -65,7 +65,7 @@ chmod +x start.sh
 This single script will automatically:
 1. Compile the Vite/React frontend.
 2. Compile the Go binary `clawo11y-agent`.
-3. Create a Python `.venv`, install dependencies, and spin up the FastAPI server.
+3. Compile the Go binary `clawo11y-server` and spin it up.
 4. Launch the Go agent in the background to start pumping telemetry data.
 
 Press `Ctrl+C` to gracefully shut down both the server and the agent.
@@ -78,22 +78,20 @@ Press `Ctrl+C` to gracefully shut down both the server and the agent.
 If you are running the "Overlord Architecture" where your central O11y Server is running elsewhere, you can deploy the Server and lightweight Go Agent as native Systemd services.
 
 #### 1. The Server & Web Frontend
-The FastAPI server is designed to serve the built React files statically. You don't need a separate Node.js server.
+The Go Server is designed to serve the built React files statically. You don't need a separate Node.js server.
 
 If your code is located at `/opt/clawo11y`, follow these steps:
 
 ```bash
 # 1. Build the frontend
-cd /opt/clawo11y/web && npm install && npm run build
+cd /opt/clawo11y/services/web && npm install && npm run build
 
-# 2. Setup Python env (requires python3-venv)
-cd /opt/clawo11y
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+# 2. Build the Server
+cd /opt/clawo11y/services/server
+go build -o server .
 
 # 3. Setup systemd (If your path is not /opt/clawo11y, edit the paths in scripts/o11y-server.service)
-sudo cp scripts/o11y-server.service /etc/systemd/system/
+sudo cp ../../scripts/o11y-server.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now o11y-server
 ```
@@ -129,7 +127,7 @@ Both the Agent and Server support environment variables for easy configuration w
 | `OPENCLAW_BASE_DIR` | `~/.openclaw` | The root directory where your Agent's `workspace`, `cron`, and `logs` live. |
 | `GATEWAY_LOG_DIR` | `<OPENCLAW_BASE_DIR>/logs` | Optional explicit directory for gateway log collection. If unset and `<OPENCLAW_BASE_DIR>/logs` does not exist, the agent falls back to `/tmp/openclaw`. |
 
-### Server (`core.server.main`)
+### Server (`services/server/main.go`)
 | Variable | Default | Description |
 |---|---|---|
 | `O11Y_DB_URL` | `sqlite:///./o11y_server.db` | Connection string for the telemetry database. |
@@ -139,22 +137,23 @@ Both the Agent and Server support environment variables for easy configuration w
 ## 🛠️ Hacking & Modifying
 
 ```bash
-# Terminal 1: Python Backend
-python -m core.server.main
+# Terminal 1: Go Server
+cd services/server
+go run .
 
 # Terminal 2: React Hot-Reload
-cd web
+cd services/web
 npm run dev
 
 # Terminal 3: Go Agent
-cd clawo11y-agent
+cd services/agent
 go run .
 ```
 
 ---
 
 ## 📝 Data Retention
-- The Python Server uses SQLite (`o11y_server.db`).
+- The Go Server uses SQLite (`o11y_server.db`).
 - **Agent Events** (Timeline): Retains the latest 1,000 events in memory snapshots to prevent browser lag.
 - **Cron Runs**: The Go Agent parses the latest 5,000 runs per job directly from `.jsonl` files on startup, ensuring you never lose context after a reboot.
 
@@ -166,7 +165,7 @@ OpenClaw O11y is evolving from a simple "file viewer" into an enterprise-grade A
 
 ### Phase 1: Deep Tracing via OpenTelemetry (OTel)
 **Goal:** Solve the "black box" problem of complex Agent cascades, nested tool executions, and concurrent thought processes.
-- **Architecture Shift:** Upgrade the FastAPI Server to act as a lightweight OTLP receiver, moving away from relying solely on the Go Agent to parse local `.jsonl` files.
+- **Architecture Shift:** Upgrade the Go Server to act as a lightweight OTLP receiver, moving away from relying solely on the Go Agent to parse local `.jsonl` files.
 - **Implementation:** Introduce `opentelemetry-sdk` to accept standard OTel Spans pushed directly by OpenClaw.
 - **UI Upgrade:** Build a Jaeger/Zipkin-style Trace detail page. Render millisecond-accurate Gantt charts/waterfall views based on `TraceID` and `ParentSpanID` to pinpoint exactly where an LLM stalled or hallucinated.
 
@@ -182,9 +181,9 @@ OpenClaw O11y is evolving from a simple "file viewer" into an enterprise-grade A
 ### Phase 3: Proactive Alerting & Cost Intervention
 **Goal:** Shift from passively "looking at charts" to proactively notifying the team, preventing issues before they escalate.
 - **Lightweight Rule Engine:** Define simple thresholds via an `alerts.yaml` configuration file (e.g., `condition: error_logs > 100 in 5m` or `condition: cost_usd > 10 in 1h`).
-- **Background Patrol:** Implement asynchronous background tasks in the FastAPI server to continuously evaluate rules against the database.
+- **Background Patrol:** Implement asynchronous background tasks in the Go server to continuously evaluate rules against the database.
 - **Notification Pipelines:** Trigger simple Webhooks to push alert messages to Slack, Microsoft Teams, Discord, or email when thresholds are breached.
 
 ---
 
-*Happy observing. May your cache hit rates be high and your hallucinations be low.* <img src="web/public/favicon.svg" width="16" height="16" alt="O11y" style="vertical-align: middle;">
+*Happy observing. May your cache hit rates be high and your hallucinations be low.* <img src="services/web/public/favicon.svg" width="16" height="16" alt="O11y" style="vertical-align: middle;">
