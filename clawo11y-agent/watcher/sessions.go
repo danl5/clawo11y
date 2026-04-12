@@ -24,6 +24,7 @@ type SessionEntry struct {
 	CostUSD    float64 `json:"cost_usd,omitempty"`
 	AgentName  string  `json:"agent_name,omitempty"`
 	Channel    string  `json:"channel,omitempty"`
+	IsHistory  bool    `json:"is_history"`
 }
 
 type SessionsEvent struct {
@@ -32,6 +33,7 @@ type SessionsEvent struct {
 	Sessions     []SessionEntry `json:"sessions,omitempty"`
 	SessionCount int            `json:"session_count"`
 	ActiveCount  int            `json:"active_count"`
+	HistoryCount int            `json:"history_count"`
 	Timestamp    time.Time      `json:"timestamp"`
 }
 
@@ -86,14 +88,15 @@ func (w *SessionsWatcher) addAllSessionsJson() error {
 		if !entry.IsDir() {
 			continue
 		}
-		sessionsJson := filepath.Join(w.agentsBaseDir, entry.Name(), "sessions", "sessions.json")
+		sessionsDir := filepath.Join(w.agentsBaseDir, entry.Name(), "sessions")
+		sessionsJson := filepath.Join(sessionsDir, "sessions.json")
 		if _, err := os.Stat(sessionsJson); os.IsNotExist(err) {
 			continue
 		}
-		if err := w.watcher.Add(sessionsJson); err != nil {
-			log.Printf("Warning: failed to watch %s: %v", sessionsJson, err)
+		if err := w.watcher.Add(sessionsDir); err != nil {
+			log.Printf("Warning: failed to watch %s: %v", sessionsDir, err)
 		} else {
-			log.Printf("Sessions watcher: now monitoring %s", sessionsJson)
+			log.Printf("Sessions watcher: now monitoring %s", sessionsDir)
 		}
 	}
 	return nil
@@ -106,17 +109,31 @@ func (w *SessionsWatcher) readSessions() (*SessionsEvent, error) {
 	}
 
 	var allSessions []SessionEntry
-	nowMs := time.Now().UnixMilli()
+	seenSessions := make(map[string]bool)
 	activeCount := 0
+	historyCount := 0
 
 	for _, entry := range entries {
 		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		sessionsJson := filepath.Join(w.agentsBaseDir, entry.Name(), "sessions", "sessions.json")
+		sessionsDir := filepath.Join(w.agentsBaseDir, entry.Name(), "sessions")
+		sessionsJson := filepath.Join(sessionsDir, "sessions.json")
 		data, err := os.ReadFile(sessionsJson)
 		if err != nil {
 			continue
+		}
+
+		// First, collect all actual files in the sessions directory to determine if a session is history
+		sessionFiles, _ := os.ReadDir(sessionsDir)
+		activeSessionsMap := make(map[string]bool)
+		for _, f := range sessionFiles {
+			name := f.Name()
+			if strings.Contains(name, ".jsonl") && !strings.Contains(name, ".reset.") && !strings.Contains(name, ".deleted.") {
+				// e657a5e2-1ae0-4634-a1f3-2fddb07d58a1.jsonl -> e657a5e2-1ae0-4634-a1f3-2fddb07d58a1
+				sessionID := strings.Split(name, ".jsonl")[0]
+				activeSessionsMap[sessionID] = true
+			}
 		}
 
 		h := data
@@ -142,29 +159,141 @@ func (w *SessionsWatcher) readSessions() (*SessionsEvent, error) {
 			continue
 		}
 
+		metadataBySessionID := make(map[string]struct {
+			Key        string
+			Label      string
+			Model      string
+			Provider   string
+			Status     string
+			UpdatedAt  int64
+			CreatedAt  int64
+			TokenCount int
+			CostUSD    float64
+			Channel    string
+		})
+
 		agentName := entry.Name()
 		for key, s := range raw {
-			_ = key
-			if s.UpdatedAt > 0 && nowMs-s.UpdatedAt < 5*60*1000 {
-				activeCount++
-			}
 			channel := s.LastChannel
 			if channel == "" {
 				channel = s.Origin.Label
 			}
-			allSessions = append(allSessions, SessionEntry{
-				SessionID:  s.SessionID,
+			metadataBySessionID[s.SessionID] = struct {
+				Key        string
+				Label      string
+				Model      string
+				Provider   string
+				Status     string
+				UpdatedAt  int64
+				CreatedAt  int64
+				TokenCount int
+				CostUSD    float64
+				Channel    string
+			}{
 				Key:        key,
 				Label:      s.Label,
 				Model:      s.Model,
 				Provider:   s.Provider,
 				Status:     s.Status,
+				UpdatedAt:  s.UpdatedAt,
 				CreatedAt:  s.CreatedAt,
-				LastActive: s.UpdatedAt,
 				TokenCount: s.TokenCount,
 				CostUSD:    s.CostUSD,
+				Channel:    channel,
+			}
+		}
+
+		for _, f := range sessionFiles {
+			if f.IsDir() {
+				continue
+			}
+
+			name := f.Name()
+			if !strings.Contains(name, ".jsonl") {
+				continue
+			}
+
+			sessionID := strings.Split(name, ".jsonl")[0]
+			if sessionID == "" {
+				continue
+			}
+
+			sessionKey := agentName + ":" + name
+			if seenSessions[sessionKey] {
+				continue
+			}
+			seenSessions[sessionKey] = true
+
+			isHistory := strings.Contains(name, ".reset.") || strings.Contains(name, ".deleted.") || !activeSessionsMap[sessionID]
+			if isHistory {
+				historyCount++
+			} else {
+				activeCount++
+			}
+
+			meta, ok := metadataBySessionID[sessionID]
+			info, statErr := f.Info()
+			fileTimeMs := int64(0)
+			if statErr == nil {
+				fileTimeMs = info.ModTime().UnixMilli()
+			}
+
+			status := ""
+			if ok {
+				status = meta.Status
+			}
+			if status == "" {
+				switch {
+				case strings.Contains(name, ".deleted."):
+					status = "deleted"
+				case strings.Contains(name, ".reset."):
+					status = "reset"
+				default:
+					status = "active"
+				}
+			}
+
+			createdAt := fileTimeMs
+			lastActive := fileTimeMs
+			if ok {
+				if meta.CreatedAt > 0 {
+					createdAt = meta.CreatedAt
+				}
+				if meta.UpdatedAt > 0 {
+					lastActive = meta.UpdatedAt
+				}
+			}
+
+			key := name
+			label := ""
+			model := ""
+			provider := ""
+			tokenCount := 0
+			costUSD := 0.0
+			channel := ""
+			if ok {
+				label = meta.Label
+				model = meta.Model
+				provider = meta.Provider
+				tokenCount = meta.TokenCount
+				costUSD = meta.CostUSD
+				channel = meta.Channel
+			}
+
+			allSessions = append(allSessions, SessionEntry{
+				SessionID:  sessionID,
+				Key:        key,
+				Label:      label,
+				Model:      model,
+				Provider:   provider,
+				Status:     status,
+				CreatedAt:  createdAt,
+				LastActive: lastActive,
+				TokenCount: tokenCount,
+				CostUSD:    costUSD,
 				AgentName:  agentName,
 				Channel:    channel,
+				IsHistory:  isHistory,
 			})
 		}
 	}
@@ -174,6 +303,7 @@ func (w *SessionsWatcher) readSessions() (*SessionsEvent, error) {
 		Sessions:     allSessions,
 		SessionCount: len(allSessions),
 		ActiveCount:  activeCount,
+		HistoryCount: historyCount,
 		Timestamp:    time.Now().UTC(),
 	}, nil
 }
@@ -200,12 +330,11 @@ func (w *SessionsWatcher) watchLoop() {
 			if !ok {
 				return
 			}
-			if filepath.Base(event.Name) == "sessions.json" && (event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Rename)) {
-				if event.Has(fsnotify.Create) || event.Has(fsnotify.Rename) {
-					if err := w.watcher.Add(event.Name); err != nil {
-						log.Printf("Sessions watcher: failed to watch new file %s: %v", event.Name, err)
-					}
-				}
+			base := filepath.Base(event.Name)
+			isSessionsIndexChange := base == "sessions.json" && (event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Rename))
+			isSessionFileChange := strings.Contains(base, ".jsonl") && (event.Has(fsnotify.Create) || event.Has(fsnotify.Rename) || event.Has(fsnotify.Remove))
+
+			if isSessionsIndexChange || isSessionFileChange {
 				w.emit()
 			}
 		case err, ok := <-w.watcher.Errors:

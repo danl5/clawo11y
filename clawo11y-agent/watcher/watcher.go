@@ -54,20 +54,42 @@ func (w *SessionWatcher) Start() error {
 }
 
 func (w *SessionWatcher) scanExistingFiles() error {
+	w.loadState()
 	entries, err := os.ReadDir(w.sessionDir)
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".jsonl") &&
-			!strings.Contains(entry.Name(), ".deleted.") &&
-			!strings.Contains(entry.Name(), ".reset.") {
+		if !entry.IsDir() && strings.Contains(entry.Name(), ".jsonl") {
 			filePath := filepath.Join(w.sessionDir, entry.Name())
-			w.knownFiles[filePath] = 0
+			if _, ok := w.knownFiles[filePath]; !ok {
+				w.knownFiles[filePath] = 0
+			}
 			w.readNewLines(filePath)
 		}
 	}
 	return nil
+}
+
+func (w *SessionWatcher) loadState() {
+	stateFile := filepath.Join(w.sessionDir, ".o11y-state.json")
+	data, err := os.ReadFile(stateFile)
+	if err == nil {
+		var state map[string]int64
+		if err := json.Unmarshal(data, &state); err == nil {
+			for k, v := range state {
+				w.knownFiles[k] = v
+			}
+		}
+	}
+}
+
+func (w *SessionWatcher) saveState() {
+	stateFile := filepath.Join(w.sessionDir, ".o11y-state.json")
+	data, err := json.Marshal(w.knownFiles)
+	if err == nil {
+		os.WriteFile(stateFile, data, 0644)
+	}
 }
 
 func (w *SessionWatcher) readNewLines(filePath string) {
@@ -98,6 +120,7 @@ func (w *SessionWatcher) readNewLines(filePath string) {
 	}
 
 	w.knownFiles[filePath] = info.Size()
+	w.saveState()
 }
 
 func (w *SessionWatcher) parseAndSend(filePath, line string) {
@@ -106,7 +129,11 @@ func (w *SessionWatcher) parseAndSend(filePath, line string) {
 		return
 	}
 
-	sessionID := strings.TrimSuffix(filepath.Base(filePath), ".jsonl")
+	// For files like 25cfb8e9-3646-46f8-94b8-4978b5c700d2.jsonl or .jsonl.reset.xxx
+	// We need to strictly extract just the UUID part before .jsonl
+	baseName := filepath.Base(filePath)
+	sessionID := strings.Split(baseName, ".jsonl")[0]
+
 	eventType := w.classifyEvent(raw)
 	payload := schemas.AgentEventPayload{
 		NodeID:    "",
@@ -236,8 +263,13 @@ func (w *SessionWatcher) watchLoop() {
 			if !ok {
 				return
 			}
-			if event.Has(fsnotify.Write) && strings.HasSuffix(event.Name, ".jsonl") {
-				w.readNewLines(event.Name)
+			if strings.Contains(event.Name, ".jsonl") {
+				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
+					if _, ok := w.knownFiles[event.Name]; !ok {
+						w.knownFiles[event.Name] = 0
+					}
+					w.readNewLines(event.Name)
+				}
 			}
 		case err, ok := <-w.watcher.Errors:
 			if !ok {

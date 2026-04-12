@@ -59,6 +59,9 @@ export interface WsMessage {
     status?: string;
     agent_name?: string;
     channel?: string;
+    is_history?: boolean;
+    last_active_ms?: number;
+    created_at_ms?: number;
   }>;
   summary?: {
     agent_name?: string;
@@ -75,7 +78,7 @@ export interface WsMessage {
 }
 
 export interface TimelineEvent {
-  id: number;
+  id: number | string;
   event_type: string;
   model?: string;
   provider?: string;
