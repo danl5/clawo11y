@@ -25,7 +25,7 @@ else
     exit 1
 fi
 
-AGENT_URL="https://github.com/openclaw/clawo11y/releases/latest/download/$BINARY"
+AGENT_URL="https://github.com/danl5/clawo11y/releases/latest/download/$BINARY"
 AGENT_PATH="$O11Y_DIR/clawo11y-agent"
 
 echo "[1/3] Downloading agent binary for $OS / $ARCH..."
