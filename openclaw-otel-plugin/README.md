@@ -116,7 +116,9 @@ Add:
           "root_idle_timeout_ms": 60000,
           "pricing": {
             "qwen-max": { "prompt": 1.5, "completion": 4.5 },
-            "claude-3-opus": { "prompt": 15.0, "completion": 75.0 }
+            "claude-3-opus": { "prompt": 15.0, "completion": 75.0 },
+            "MiniMax-M2.7": { "input": 0.3, "output": 1.2 },
+            "MiniMax-M2.7-highspeed": { "input": 0.3, "output": 1.2 }
           }
         }
       }
@@ -142,7 +144,34 @@ Add:
   - how long to keep a root run open after the last related event
   - default: `60000`
 - `config.pricing`
-  - custom cost table per 1M prompt/completion tokens
+  - custom cost table per 1M tokens
+  - supports either `prompt` / `completion` or `input` / `output`
+
+### MiniMax Pricing Note
+
+MiniMax publicly documents pricing in `input tokens` and `output tokens`, while the plugin historically used `prompt` and `completion`.
+
+The plugin now supports both styles, so the following are equivalent:
+
+```json
+{
+  "pricing": {
+    "MiniMax-M2.7": { "input": 0.3, "output": 1.2 },
+    "MiniMax-M2.7-highspeed": { "input": 0.3, "output": 1.2 }
+  }
+}
+```
+
+```json
+{
+  "pricing": {
+    "MiniMax-M2.7": { "prompt": 0.3, "completion": 1.2 },
+    "MiniMax-M2.7-highspeed": { "prompt": 0.3, "completion": 1.2 }
+  }
+}
+```
+
+If MiniMax updates its public pricing or your account uses a different commercial plan, override these values with the latest official numbers for your model and region.
 
 ### Important Endpoint Note
 

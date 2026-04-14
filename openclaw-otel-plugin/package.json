@@ -21,7 +21,9 @@
             "type": "object",
             "properties": {
               "prompt": { "type": "number" },
-              "completion": { "type": "number" }
+              "completion": { "type": "number" },
+              "input": { "type": "number" },
+              "output": { "type": "number" }
             }
           }
         }
