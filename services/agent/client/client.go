@@ -2,11 +2,12 @@ package client
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
-	"github.com/go-resty/resty/v2"
 	"github.com/danl5/clawo11y/services/agent/schemas"
+	"github.com/go-resty/resty/v2"
 )
 
 type ServerClient struct {
@@ -14,9 +15,29 @@ type ServerClient struct {
 	baseURL string
 }
 
-func NewServerClient(baseURL string) *ServerClient {
+type ClientOptions struct {
+	Timeout       time.Duration
+	RetryCount    int
+	RetryWaitTime time.Duration
+}
+
+func NewServerClient(baseURL string, opts *ClientOptions) *ServerClient {
+	timeout := 10 * time.Second
+	retryCount := 3
+	retryWaitTime := 1 * time.Second
+	if opts != nil {
+		if opts.Timeout > 0 {
+			timeout = opts.Timeout
+		}
+		if opts.RetryCount >= 0 {
+			retryCount = opts.RetryCount
+		}
+		if opts.RetryWaitTime > 0 {
+			retryWaitTime = opts.RetryWaitTime
+		}
+	}
 	return &ServerClient{
-		client:  resty.New().SetTimeout(10 * time.Second).SetRetryCount(3).SetRetryWaitTime(1 * time.Second),
+		client:  resty.New().SetTimeout(timeout).SetRetryCount(retryCount).SetRetryWaitTime(retryWaitTime),
 		baseURL: baseURL,
 	}
 }
@@ -61,6 +82,21 @@ func (c *ServerClient) SendGatewayLogEvent(event schemas.GatewayLogEventPayload)
 
 func (c *ServerClient) SendHealthHistoryEvent(event schemas.HealthHistoryEventPayload) error {
 	return c.sendJSON("/api/v1/events/health/", event)
+}
+
+func (c *ServerClient) SendOtlpData(endpoint string, payload []byte) error {
+	resp, err := c.client.R().
+		SetHeader("Content-Type", "application/x-protobuf").
+		SetBody(payload).
+		Post(c.baseURL + endpoint)
+
+	if err != nil {
+		return err
+	}
+	if resp.IsError() {
+		return fmt.Errorf("HTTP %d", resp.StatusCode())
+	}
+	return nil
 }
 
 func (c *ServerClient) sendJSON(endpoint string, payload interface{}) error {

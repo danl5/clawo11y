@@ -12,8 +12,16 @@ ExecStart=/opt/clawo11y/clawo11y-agent-linux-amd64
 
 # Environment Configuration
 Environment="O11Y_SERVER_URL=http://127.0.0.1:8000"
+Environment="O11Y_OTLP_PROXY_ADDR=127.0.0.1:4318"
 Environment="OPENCLAW_BASE_DIR=/root/.openclaw"
 # Environment="GATEWAY_LOG_DIR=/tmp/openclaw"
+# Environment="O11Y_METRICS_INTERVAL_SEC=60"
+# Environment="O11Y_REQUEST_CONCURRENCY=3"
+# Environment="O11Y_CLIENT_TIMEOUT_SEC=10"
+# Environment="O11Y_CLIENT_RETRY_COUNT=3"
+# Environment="O11Y_CLIENT_RETRY_WAIT_MS=1000"
+# Environment="O11Y_OTLP_PROXY_QUEUE_SIZE=5000"
+# Environment="O11Y_OTLP_PROXY_RETRY_INTERVAL_SEC=5"
 
 Restart=always
 RestartSec=5

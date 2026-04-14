@@ -1,60 +1,157 @@
-# <img src="services/web/public/favicon.svg" width="32" height="32" alt="OpenClaw O11y Logo" style="vertical-align: middle;"> OpenClaw O11y (Observability)
+# <img src="services/web/public/favicon.svg" width="32" height="32" alt="OpenClaw O11y Logo" style="vertical-align: middle;"> OpenClaw O11y
 
-Welcome to **OpenClaw O11y** — the telemetry dashboard for your OpenClaw AI Agents. 
+OpenClaw O11y is an observability stack for OpenClaw agents.
 
-Stop SSH-ing into your VMs just to `tail -f` a `.jsonl` file. Stop guessing how many tokens your latest prompt burned. OpenClaw O11y gives you a real-time, cyberpunk-styled window directly into the "brains" of your AI workforce. 
+It combines:
 
-![OpenClaw O11y Dashboard Overview](services/web/public/overview.png)
+- a lightweight Go agent that watches local OpenClaw state and hosts a local OTLP proxy
+- a central Go server that receives OTLP data, stores it, aggregates it, and serves dashboards
+- a React frontend focused on AI-agent business views instead of raw telemetry plumbing
 
----
+The goal is not just to show metrics/logs/traces. The goal is to answer questions like:
 
-## ✨ Features
+- Which run burned the most money?
+- Which model is expensive or unstable?
+- Which tool is slow or failing?
+- Did a session start looping and expanding context?
+- Did the agent execute risky shell or filesystem operations?
 
-- 🧠 **Deep Thought & Timeline Inspection**: Expandable panels for LLM inner monologues and tool calls.
-- 💰 **Live Token Economy**: Real-time tracking of Input, Output, and Cache tokens with Cost (USD) metrics.
-- 🗂️ **Multi-Agent Workspace Explorer**: Dynamic `.md` and `.json` file cards across all your `workspace*` directories.
-- ⏱️ **Cron Job Telemetry**: Deep execution history (up to 5,000 runs) with accordion-style expandable summaries.
-- 📊 **Live System & Log Tailing**: 60-second hardware metrics (CPU/RAM/Disk) and streaming JSON log parser.
-- 🌍 **Distributed Monitoring**: Drop a lightweight Go binary on any remote node to instantly stream telemetry to your central dashboard.
-
----
-
-## 🏗️ Architecture
-
-O11y isn't a monolith; it's designed to be distributed. It consists of three parts:
-
-1. **The Probe (`clawo11y-agent`)**: A lightweight, blazing-fast Go binary that lives on your Agent's host machine. It uses `fsnotify` to watch file changes and pushes data up.
-2. **The Brain (`services/server`)**: A high-performance Golang Gin server backed by SQLite. It aggregates data from multiple probes and broadcasts it via WebSockets.
-3. **The Glass (`services/web`)**: A React/Vite frontend bathed in Tailwind CSS glassmorphism and neon gradients.
+![OpenClaw O11y Dashboard Overview](services/web/public/openclawo11y.gif)
 
 ---
 
-## 🚀 Deployment Guide
+## What It Does
 
-Choose the setup that best fits your environment.
+OpenClaw O11y currently provides two layers of observability:
 
-### 1️⃣ Quick Start (Docker Compose)
-*The fastest way to get everything running in isolated containers. Recommended for most users.*
+- **Runtime event views**
+  - overview, tokens, sessions, cron, workspace, and live logs
+- **OTel-native agent observability**
+  - trace call trees
+  - cost dashboard
+  - metrics dashboard
+  - observability health
+  - security timeline
+  - context bloat candidates
 
-We provide pre-built container images via GHCR. You can pull and run the entire stack (Server + Web + Agent) with two commands:
+---
+
+## Product Views
+
+### FinOps for AI
+
+- **Cost Dashboard**
+  - total spend, calls, tokens, average cost per call
+  - provider-stacked daily cost trend
+  - model cost breakdown
+- **Top Expensive Runs**
+  - surfaces the highest-cost sessions directly from root trace summaries
+- **Cost Flame Graph**
+  - renders a selected trace in `cost` mode or `token` mode
+- **Context Bloat Alert**
+  - flags sessions whose prompt-token growth suggests runaway loops or exploding context
+
+### Agent Debugging
+
+- **Deep Trace View**
+  - root run summaries
+  - nested LLM / tool / subagent spans
+  - duration, model, provider, cost, tokens, errors, params, outputs
+- **Tool Reliability Matrix**
+  - calls, errors, error rate, average latency, P95 latency, max latency
+- **Observability Health**
+  - root recreation
+  - orphan events
+  - idle-timeout closures
+  - lifecycle anomalies emitted by the plugin itself
+
+### Security & Compliance
+
+- **High-Risk Operation Timeline**
+  - classifies risky tool calls into categories such as shell, code execution, filesystem mutation, and network access
+  - shows risk class, reason, params preview, duration, and error state
+
+---
+
+## Architecture
+
+The stack has four moving parts:
+
+1. **OpenClaw runtime**
+   - emits native runtime events such as `llm_input`, `llm_output`, `before_tool_call`, `after_tool_call`, `subagent_*`, `agent_end`
+2. **OpenClaw OTEL plugin**
+   - converts runtime events into OTLP traces, metrics, and logs
+   - sends them to the local OTLP proxy on the worker host
+3. **Go agent**
+   - watches local OpenClaw files and logs
+   - forwards OTLP payloads to the central server
+   - collects node metrics
+4. **Go server + React web**
+   - receives OTLP and event data
+   - stores it in SQLite
+   - serves business-oriented dashboards and WebSocket updates
+
+High-level flow:
+
+```text
+OpenClaw Runtime
+  -> openclaw-otel-plugin
+  -> local OTLP proxy on clawo11y-agent
+  -> central clawo11y server
+  -> SQLite + aggregations
+  -> React dashboards
+```
+
+---
+
+## Key Repositories and Paths
+
+- `services/agent`
+  - worker-side Go process
+- `services/server`
+  - central API server, OTLP receiver, aggregation layer
+- `services/web`
+  - React frontend
+- `openclaw-otel-plugin`
+  - OpenClaw plugin that emits traces, metrics, and logs
+- `scripts/o11y-agent.service`
+  - systemd example for the worker agent
+- `scripts/o11y-server.service`
+  - systemd example for the central server
+
+---
+
+## Deployment
+
+Choose the mode that fits your setup.
+
+### 1. Quick Start (Docker Compose)
+
+Use this mode when you want the fastest single-host experience for evaluation or demos.
 
 ```bash
-# Download the docker-compose file
-curl -O https://raw.githubusercontent.com/danl5/clawo11y/main/docker-compose.yml
+git clone https://github.com/danl5/clawo11y.git
+cd clawo11y
 
-# Spin it up!
-docker-compose up -d
+docker compose up -d
 ```
-> **Note:** The `docker-compose.yml` mounts `~/.openclaw` into the Agent container. Adjust the path in the file if your OpenClaw workspace is located elsewhere!
 
-Access your dashboard at **[http://localhost:8000](http://localhost:8000)**.
+This starts:
 
----
+- the central server + web UI
+- the worker-side Go agent
 
-### 2️⃣ Local Development (Bare-metal)
-*Run directly on your host machine without Docker. Perfect for local dev, tinkering, and modifying the source code.*
+Important notes:
 
-Clone the repository and run our automated setup script:
+- `docker-compose.yml` mounts `~/.openclaw` into the agent container
+- if your OpenClaw data lives elsewhere, change the left-hand side of that bind mount
+- this gets you the runtime-event views immediately
+- OTEL-native views still require the OpenClaw plugin to be installed and configured in your OpenClaw environment
+
+### 2. Local Development
+
+Run everything on one machine:
+
 ```bash
 git clone https://github.com/danl5/clawo11y.git
 cd clawo11y
@@ -62,127 +159,248 @@ cd clawo11y
 chmod +x start.sh
 ./start.sh
 ```
-This single script will automatically:
-1. Compile the Vite/React frontend.
-2. Compile the Go binary `clawo11y-agent`.
-3. Compile the Go binary `clawo11y-server` and spin it up.
-4. Launch the Go agent in the background to start pumping telemetry data.
 
-Press `Ctrl+C` to gracefully shut down both the server and the agent.
+The script builds:
 
----
+- the React frontend
+- the Go server
+- the Go agent
 
-### 3️⃣ Distributed Monitoring (Bare-Metal Production)
-*For a robust, daemonized deployment across multiple nodes without Docker.*
+and starts the local stack.
 
-If you are running the "Overlord Architecture" where your central O11y Server is running elsewhere, you can deploy the Server and lightweight Go Agent as native Systemd services.
+### 3. Bare-Metal / Systemd
 
-#### 1. The Server & Web Frontend
-The Go Server is designed to serve the built React files statically. You don't need a separate Node.js server.
+Recommended for real worker/server separation.
 
-If your code is located at `/opt/clawo11y`, follow these steps:
+#### Central Server
 
 ```bash
-# 1. Build the frontend
-cd /opt/clawo11y/services/web && npm install && npm run build
+# Build frontend assets
+cd /opt/clawo11y/services/web
+npm install
+npm run build
 
-# 2. Build the Server
+# Build Go server binary
 cd /opt/clawo11y/services/server
-go build -o server .
+go build -o /opt/clawo11y/bin/clawo11y-server .
 
-# 3. Setup systemd (If your path is not /opt/clawo11y, edit the paths in scripts/o11y-server.service)
-sudo cp ../../scripts/o11y-server.service /etc/systemd/system/
+# Install systemd unit
+sudo cp /opt/clawo11y/scripts/o11y-server.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now o11y-server
 ```
 
-#### 2. The Go Agent (On Worker Nodes)
-You only need to deploy the Go Agent on your remote OpenClaw workers.
+#### Worker Agent
 
-1. Head to the [Releases Page](https://github.com/danl5/clawo11y/releases) and download the pre-compiled binary for your worker's OS/Arch.
-2. Configure and enable the Systemd service:
 ```bash
-# 1. Edit the environment variables in the service file
-nano scripts/o11y-agent.service
-# Set: Environment="O11Y_SERVER_URL=http://<YOUR_CENTRAL_SERVER_IP>:8000"
+# Build or download the worker agent binary
+cd /opt/clawo11y/services/agent
+go build -o /opt/clawo11y/bin/clawo11y-agent .
 
-# 2. Setup systemd
-sudo cp scripts/o11y-agent.service /etc/systemd/system/
+# Install systemd unit
+sudo cp /opt/clawo11y/scripts/o11y-agent.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now o11y-agent
 ```
 
-> *Pro-tip: Check logs anytime using: `journalctl -fu o11y-server` or `journalctl -fu o11y-agent`*
+#### OpenClaw Plugin
 
----
-
-## ⚙️ Configuration (Environment Variables)
-
-Both the Agent and Server support environment variables for easy configuration without changing code.
-
-### Agent (`clawo11y-agent`)
-| Variable | Default | Description |
-|---|---|---|
-| `O11Y_SERVER_URL` | `http://127.0.0.1:8000` | The address of your central O11y FastAPI server. |
-| `OPENCLAW_BASE_DIR` | `~/.openclaw` | The root directory where your Agent's `workspace`, `cron`, and `logs` live. |
-| `GATEWAY_LOG_DIR` | `<OPENCLAW_BASE_DIR>/logs` | Optional explicit directory for gateway log collection. If unset and `<OPENCLAW_BASE_DIR>/logs` does not exist, the agent falls back to `/tmp/openclaw`. |
-
-### Server (`services/server/main.go`)
-| Variable | Default | Description |
-|---|---|---|
-| `O11Y_DB_URL` | `sqlite:///./o11y_server.db` | Connection string for the telemetry database. |
-
----
-
-## 🛠️ Hacking & Modifying
+Install the plugin from the local path:
 
 ```bash
-# Terminal 1: Go Server
+openclaw plugins install /opt/clawo11y/openclaw-otel-plugin
+```
+
+Then configure it in `~/.openclaw/openclaw.json`:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "@clawo11y/openclaw-otel-plugin": {
+        "enabled": true,
+        "config": {
+          "endpoint": "http://localhost:4318",
+          "metric_interval_ms": 10000,
+          "export_timeout_ms": 5000,
+          "root_idle_timeout_ms": 60000
+        }
+      }
+    }
+  }
+}
+```
+
+If you change the agent-side OTLP proxy address, make sure the plugin `config.endpoint` matches it.
+
+---
+
+## With Plugin vs Without Plugin
+
+This distinction is important.
+
+### Without the OpenClaw OTEL Plugin
+
+You still get the runtime-event experience from the Go agent:
+
+- `Overview`
+- `Tokens`
+- `Sessions`
+- `Cron`
+- `Workspace`
+- live event/log streaming
+- node/system metrics
+
+This mode depends on:
+
+- local OpenClaw files and logs
+- agent-side parsing and event forwarding
+
+This mode does **not** provide the full OTEL-native product views.
+
+### With the OpenClaw OTEL Plugin Enabled
+
+You additionally get the OTEL-native agent observability layer:
+
+- `Trace`
+  - deep call tree, span waterfall, run summaries
+- `Cost`
+  - cost dashboard, top expensive runs, cost/token flame graph, context bloat candidates
+- `Metrics`
+  - run / llm / tool / subagent / health metrics
+- `Security`
+  - high-risk operation timeline
+- observability self-health
+  - root recreation
+  - orphan events
+  - idle-timeout closures
+
+This mode depends on:
+
+- the plugin being installed in OpenClaw
+- plugin `config.endpoint` pointing to the worker-local OTLP proxy
+- OpenClaw runtime events including token/usage data when available
+
+### Practical Rule
+
+- If you only deploy `server + web + agent`, you get the classic runtime-event dashboards.
+- If you also install the plugin, you unlock the full OTEL-native observability product.
+
+---
+
+## Environment Variables
+
+### Agent (`clawo11y-agent`)
+
+| Variable | Default | Description |
+|---|---|---|
+| `O11Y_SERVER_URL` | `http://127.0.0.1:8000` | Central server base URL. |
+| `O11Y_OTLP_PROXY_ADDR` | `127.0.0.1:4318` | Listen address for the worker-local OTLP proxy. |
+| `O11Y_METRICS_INTERVAL_SEC` | `60` | System metric collection interval. |
+| `O11Y_REQUEST_CONCURRENCY` | `3` | Max concurrent outbound requests to the server. |
+| `O11Y_CLIENT_TIMEOUT_SEC` | `10` | HTTP timeout for agent-to-server calls. |
+| `O11Y_CLIENT_RETRY_COUNT` | `3` | Retry count for agent-to-server calls. |
+| `O11Y_CLIENT_RETRY_WAIT_MS` | `1000` | Retry wait time in milliseconds. |
+| `O11Y_OTLP_PROXY_QUEUE_SIZE` | `5000` | OTLP forwarding queue capacity. |
+| `O11Y_OTLP_PROXY_RETRY_INTERVAL_SEC` | `5` | Retry interval when OTLP forwarding fails. |
+| `OPENCLAW_BASE_DIR` | `~/.openclaw` | OpenClaw root directory on the worker host. |
+| `GATEWAY_LOG_DIR` | `<OPENCLAW_BASE_DIR>/logs` | Optional explicit log directory override. |
+
+### Server (`services/server`)
+
+| Variable | Default | Description |
+|---|---|---|
+| `O11Y_SERVER_ADDR` | `0.0.0.0:8000` | Listen address for the central server. |
+| `O11Y_DB_URL` | `sqlite:///./o11y_server.db` | Telemetry database connection string. |
+| `O11Y_DATA_RETENTION_DAYS` | `7` | Data retention window for background cleanup. |
+| `O11Y_SERVER_SHUTDOWN_TIMEOUT_SEC` | `5` | Graceful shutdown timeout. |
+
+---
+
+## OTEL Plugin Highlights
+
+The bundled plugin emits:
+
+- **Traces**
+  - root `command.process`
+  - LLM spans
+  - tool spans
+  - subagent spans
+- **Metrics**
+  - run, llm, tool, subagent, security, and observability-health metrics
+- **Logs**
+  - lifecycle logs such as `run.started`, `llm.finished`, `tool.failed`, `subagent.finished`
+  - anomaly logs such as root recreation, orphan events, and idle-timeout closures
+  - security logs such as `security.high_risk_tool`
+
+See:
+
+- [openclaw-otel-plugin/README.md](openclaw-otel-plugin/README.md)
+- [openclaw-otel-plugin/doc/OBSERVABILITY_DATA.md](openclaw-otel-plugin/doc/OBSERVABILITY_DATA.md)
+
+---
+
+## Token and Cost Data Sources
+
+There are two different token paths in the product:
+
+- **Runtime event path**
+  - used by the live `Tokens` and session/event views
+  - depends on parsed OpenClaw runtime events
+- **OTEL path**
+  - used by `Trace`, `Cost`, `Metrics`, and `Context Bloat`
+  - depends on `llm_output.usage` being present and forwarded by the plugin
+
+If your provider does not expose usage consistently, cost and token views on the OTEL side may be incomplete.
+
+---
+
+## Development
+
+```bash
+# Terminal 1: central server
 cd services/server
 go run .
 
-# Terminal 2: React Hot-Reload
+# Terminal 2: frontend
 cd services/web
+npm install
 npm run dev
 
-# Terminal 3: Go Agent
+# Terminal 3: worker agent
 cd services/agent
 go run .
 ```
 
+For plugin development:
+
+```bash
+cd openclaw-otel-plugin
+npm install
+npm run build
+```
+
+After rebuilding the plugin, restart OpenClaw / gateway so the new plugin code is loaded.
+
 ---
 
-## 📝 Data Retention
-- The Go Server uses SQLite (`o11y_server.db`).
-- **Agent Events** (Timeline): Retains the latest 1,000 events in memory snapshots to prevent browser lag.
-- **Cron Runs**: The Go Agent parses the latest 5,000 runs per job directly from `.jsonl` files on startup, ensuring you never lose context after a reboot.
+## Current Direction
 
----
+OpenClaw O11y is no longer just a local log viewer. The product direction is:
 
-## 🗺️ Roadmap & Future Vision
+- **FinOps for AI**
+  - cost attribution
+  - expensive-run analysis
+  - context bloat detection
+- **Agent Debugging**
+  - deep trace drill-down
+  - tool reliability
+  - run lifecycle health
+- **Security & Compliance**
+  - high-risk operation audit timeline
+  - structured risk classification
 
-OpenClaw O11y is evolving from a simple "file viewer" into an enterprise-grade AI asset management and observability platform. Here is our strategic roadmap:
-
-### Phase 1: Deep Tracing via OpenTelemetry (OTel)
-**Goal:** Solve the "black box" problem of complex Agent cascades, nested tool executions, and concurrent thought processes.
-- **Architecture Shift:** Upgrade the Go Server to act as a lightweight OTLP receiver, moving away from relying solely on the Go Agent to parse local `.jsonl` files.
-- **Implementation:** Introduce `opentelemetry-sdk` to accept standard OTel Spans pushed directly by OpenClaw.
-- **UI Upgrade:** Build a Jaeger/Zipkin-style Trace detail page. Render millisecond-accurate Gantt charts/waterfall views based on `TraceID` and `ParentSpanID` to pinpoint exactly where an LLM stalled or hallucinated.
-
-### Phase 2: Fleet Management & Business Intelligence (BI)
-**Goal:** Break the limitations of single-node, short-lived monitoring to provide long-term cost settlement and multi-node isolation for enterprise teams.
-- **Tagging System:** Ensure all reported telemetry data carries strong business attributes (e.g., `Cluster=prod`, `Service=customer_bot`).
-- **Data Aggregation:** Leverage the SQLite/PostgreSQL backend to perform long-term aggregations (daily, per model, per cluster).
-- **BI Dashboards:** Create dedicated reporting views:
-  - **Cost Dashboard:** 30-day API spend trends across different clusters.
-  - **Tool ROI:** Rankings of tool invocation success rates and latencies to identify inefficient tools.
-  - **Global Health Map:** A topology or grid view showing the live status of all nodes in the fleet.
-
-### Phase 3: Proactive Alerting & Cost Intervention
-**Goal:** Shift from passively "looking at charts" to proactively notifying the team, preventing issues before they escalate.
-- **Lightweight Rule Engine:** Define simple thresholds via an `alerts.yaml` configuration file (e.g., `condition: error_logs > 100 in 5m` or `condition: cost_usd > 10 in 1h`).
-- **Background Patrol:** Implement asynchronous background tasks in the Go server to continuously evaluate rules against the database.
-- **Notification Pipelines:** Trigger simple Webhooks to push alert messages to Slack, Microsoft Teams, Discord, or email when thresholds are breached.
+The long-term goal is to become an observability platform for AI workforces, not only a trace viewer.
 
 ---
 
