@@ -4,10 +4,10 @@ OpenClaw O11y is an observability stack for OpenClaw agents.
 
 It combines:
 
-- Agent: a lightweight Go agent that watches local OpenClaw state and hosts a local OTLP proxy
-- Server: a central Go server that receives both native OpenClaw events and OTLP telemetry, stores them, aggregates data, and serves dashboards
-- Web:  a React frontend focused on AI-agent business views instead of raw telemetry plumbing
-- Plugin:  an optional OpenClaw plugin (`openclaw-otel-plugin`) that emits rich OpenTelemetry traces, metrics, and logs from inside the agent runtime
+- **Agent**: a lightweight Go agent that watches local OpenClaw state and hosts a local OTLP proxy
+- **Server**: a central Go server that receives both native OpenClaw events and OTLP telemetry, stores them, aggregates data, and serves dashboards
+- **Web**:  a React frontend focused on AI-agent business views instead of raw telemetry plumbing
+- **Plugin**:  an optional OpenClaw plugin (`openclaw-otel-plugin`) that emits rich OpenTelemetry traces, metrics, and logs from inside the agent runtime
 
 The goal is not just to show metrics/logs/traces. The goal is to answer questions like:
 
