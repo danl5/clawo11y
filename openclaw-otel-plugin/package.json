@@ -6,24 +6,44 @@
   "types": "dist/index.d.ts",
   "type": "module",
   "openclaw": {
-    "extensions": ["./dist/index.js"],
+    "extensions": [
+      "./dist/index.js"
+    ],
     "configSchema": {
       "type": "object",
       "properties": {
-        "enabled": { "type": "boolean" },
-        "endpoint": { "type": "string" },
-        "metric_interval_ms": { "type": "number" },
-        "export_timeout_ms": { "type": "number" },
-        "root_idle_timeout_ms": { "type": "number" },
+        "enabled": {
+          "type": "boolean"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "metric_interval_ms": {
+          "type": "number"
+        },
+        "export_timeout_ms": {
+          "type": "number"
+        },
+        "root_idle_timeout_ms": {
+          "type": "number"
+        },
         "pricing": {
           "type": "object",
           "additionalProperties": {
             "type": "object",
             "properties": {
-              "prompt": { "type": "number" },
-              "completion": { "type": "number" },
-              "input": { "type": "number" },
-              "output": { "type": "number" }
+              "prompt": {
+                "type": "number"
+              },
+              "completion": {
+                "type": "number"
+              },
+              "input": {
+                "type": "number"
+              },
+              "output": {
+                "type": "number"
+              }
             }
           }
         }
@@ -33,23 +53,28 @@
   },
   "scripts": {
     "build": "tsc",
-    "dev": "tsc -w"
+    "dev": "tsc -w",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.8.0",
     "@opentelemetry/api-logs": "0.51.1",
-    "@opentelemetry/sdk-trace-node": "1.24.1",
-    "@opentelemetry/sdk-trace-base": "1.24.1",
-    "@opentelemetry/sdk-metrics": "1.24.1",
-    "@opentelemetry/sdk-logs": "0.51.1",
-    "@opentelemetry/exporter-trace-otlp-http": "0.51.1",
-    "@opentelemetry/exporter-metrics-otlp-http": "0.51.1",
     "@opentelemetry/exporter-logs-otlp-http": "0.51.1",
+    "@opentelemetry/exporter-metrics-otlp-http": "0.51.1",
+    "@opentelemetry/exporter-trace-otlp-http": "0.51.1",
     "@opentelemetry/resources": "1.24.1",
+    "@opentelemetry/sdk-logs": "0.51.1",
+    "@opentelemetry/sdk-metrics": "1.24.1",
+    "@opentelemetry/sdk-trace-base": "1.24.1",
+    "@opentelemetry/sdk-trace-node": "1.24.1",
     "@opentelemetry/semantic-conventions": "1.24.1"
   },
   "devDependencies": {
+    "@types/node": "^20.12.7",
+    "@vitest/coverage-v8": "^4.1.4",
     "typescript": "^5.4.5",
-    "@types/node": "^20.12.7"
+    "vitest": "^4.1.4"
   }
 }

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"time"
 
@@ -45,11 +46,11 @@ func GetSessionTimeline(c *gin.Context) {
 
 func ListSessions(c *gin.Context) {
 	type Result struct {
-		SessionID     string    `json:"session_id"`
-		EventCount    int       `json:"event_count"`
-		LastEventAt   time.Time `json:"last_event_at"`
-		Model         string    `json:"model"`
-		LastEventType string    `json:"last_event_type"`
+		SessionID     string         `json:"session_id"`
+		EventCount    int            `json:"event_count"`
+		LastEventAt   sql.NullString `json:"last_event_at"`
+		Model         string         `json:"model"`
+		LastEventType string         `json:"last_event_type"`
 	}
 
 	var results []Result
@@ -68,13 +69,37 @@ func ListSessions(c *gin.Context) {
 
 	resp := make([]gin.H, 0, len(results))
 	for _, r := range results {
+		lastEventAt := r.LastEventAt.String
+		if parsed, err := parseAggregateTimestamp(lastEventAt); err == nil {
+			lastEventAt = parsed.Format(time.RFC3339Nano)
+		}
 		resp = append(resp, gin.H{
 			"session_id":      r.SessionID,
 			"event_count":     r.EventCount,
-			"last_event_at":   r.LastEventAt.Format(time.RFC3339Nano),
+			"last_event_at":   lastEventAt,
 			"model":           r.Model,
 			"last_event_type": r.LastEventType,
 		})
 	}
 	c.JSON(200, resp)
+}
+
+func parseAggregateTimestamp(value string) (time.Time, error) {
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05-07:00",
+		"2006-01-02 15:04:05",
+	}
+	var lastErr error
+	for _, layout := range layouts {
+		if ts, err := time.Parse(layout, value); err == nil {
+			return ts, nil
+		} else {
+			lastErr = err
+		}
+	}
+	return time.Time{}, lastErr
 }

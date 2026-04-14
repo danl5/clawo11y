@@ -1,4 +1,4 @@
-.PHONY: all build build-agent build-server build-web clean run-agent run-server dev help build-all-platforms
+.PHONY: all build build-agent build-server build-web clean run-agent run-server dev help build-all-platforms test test-server test-agent test-plugin test-web
 
 # Default target
 all: build
@@ -34,6 +34,25 @@ build-all-platforms: ## Build Go binaries for all platforms (darwin, linux, wind
 		cd services/server && CGO_ENABLED=0 GOOS=$$GOOS GOARCH=$$GOARCH go build -o ../../bin/clawo11y-server-$$GOOS-$$GOARCH$$EXT main.go && cd ../..; \
 	done
 	@echo "Cross-compilation complete! Binaries are in the bin/ directory."
+
+## 🧪 Test
+test: test-server test-agent test-plugin test-web ## Run all tests
+
+test-server: ## Run Server tests
+	@echo "Testing Server..."
+	@cd services/server && go test ./...
+
+test-agent: ## Run Agent tests
+	@echo "Testing Agent..."
+	@cd services/agent && go test ./...
+
+test-plugin: ## Run Plugin tests
+	@echo "Testing Plugin..."
+	@cd openclaw-otel-plugin && npm install --legacy-peer-deps && npm test
+
+test-web: ## Run Web tests
+	@echo "Testing Web UI..."
+	@cd services/web && npm install && npm test
 
 ## 🧹 Clean
 clean: ## Remove build artifacts
