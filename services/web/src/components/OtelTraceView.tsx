@@ -60,7 +60,7 @@ interface SpanInsights {
   totalTokens: string;
 }
 
-function parseAttrMap(value: unknown): AttrMap {
+export function parseAttrMap(value: unknown): AttrMap {
   if (!value) return {};
   if (typeof value === 'string') {
     try {
@@ -73,14 +73,14 @@ function parseAttrMap(value: unknown): AttrMap {
   return typeof value === 'object' && !Array.isArray(value) ? (value as AttrMap) : {};
 }
 
-function readString(...values: unknown[]): string {
+export function readString(...values: unknown[]): string {
   for (const value of values) {
     if (typeof value === 'string' && value.trim()) return value.trim();
   }
   return '';
 }
 
-function toPreview(value: unknown, maxLen: number = 180): string {
+export function toPreview(value: unknown, maxLen: number = 180): string {
   if (value === undefined || value === null) return '';
   const raw = typeof value === 'string' ? value : JSON.stringify(value);
   const normalized = raw.replace(/\s+/g, ' ').trim();
@@ -88,12 +88,12 @@ function toPreview(value: unknown, maxLen: number = 180): string {
   return `${normalized.slice(0, maxLen)}...`;
 }
 
-function shortId(value: string, size: number = 8): string {
+export function shortId(value: string, size: number = 8): string {
   if (!value) return '-';
   return value.length <= size ? value : `${value.slice(0, size)}...`;
 }
 
-function formatNsTimestamp(unixNs: number): string {
+export function formatNsTimestamp(unixNs: number): string {
   if (!unixNs) return '-';
   return new Date(Math.floor(unixNs / 1e6)).toLocaleString();
 }
