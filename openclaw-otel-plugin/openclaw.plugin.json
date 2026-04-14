@@ -1,0 +1,45 @@
+{
+  "id": "@clawo11y/openclaw-otel-plugin",
+  "name": "ClawO11y OpenTelemetry",
+  "description": "Exports traces, metrics, and logs using OTLP standard format for ClawO11y Web UI",
+  "version": "1.0.0",
+  "author": "ClawO11y Team",
+  "hooks": ["inbound_claim", "before_tool_call", "after_tool_call"],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "description": "Enable or disable the OpenTelemetry plugin"
+      },
+      "endpoint": {
+        "type": "string",
+        "description": "The base URL of your OTLP receiver"
+      },
+      "metric_interval_ms": {
+        "type": "number",
+        "description": "Interval for exporting metrics in ms (default: 10000)"
+      },
+      "export_timeout_ms": {
+        "type": "number",
+        "description": "Timeout for exporting OTLP payloads in ms (default: 5000)"
+      },
+      "root_idle_timeout_ms": {
+        "type": "number",
+        "description": "How long to keep a root command trace open after the last related event for the same session (default: 60000)"
+      },
+      "pricing": {
+        "type": "object",
+        "description": "Custom pricing dictionary per 1M tokens",
+        "additionalProperties": {
+          "type": "object",
+          "properties": {
+            "prompt": { "type": "number" },
+            "completion": { "type": "number" }
+          }
+        }
+      }
+    },
+    "additionalProperties": false
+  }
+}

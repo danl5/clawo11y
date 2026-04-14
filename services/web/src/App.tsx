@@ -7,6 +7,11 @@ import {
   XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid
 } from 'recharts';
 
+import { OtelCostDashboard } from './components/OtelCostDashboard';
+import { OtelTraceView } from './components/OtelTraceView';
+import { OtelMetricsDashboard } from './components/OtelMetricsDashboard';
+import { OtelSecurityDashboard } from './components/OtelSecurityDashboard';
+
 const EVENT_COLORS: Record<string, string> = {
   'message': '#60a5fa',
   'custom': '#a78bfa',
@@ -162,9 +167,10 @@ function Header({ connected, messages }: { connected: boolean; messages: WsMessa
 }
 
 /* ── Tab bar ── */
-const TABS = ['overview', 'tokens', 'sessions', 'cron', 'workspace', 'logs'] as const;
+const TABS = ['overview', 'tokens', 'sessions', 'cron', 'workspace', 'logs', 'cost', 'trace', 'metrics', 'security'] as const;
 const TAB_ICONS: Record<string, string> = {
   overview: '◈', tokens: '⚡', sessions: '🧠', cron: '⏱', workspace: '📁', logs: '📋',
+  cost: '💰', trace: '🔍', metrics: '📈', security: '🛡'
 };
 
 function TabBar({ tab, setTab }: { tab: string; setTab: (t: typeof TABS[number]) => void }) {
@@ -597,7 +603,7 @@ function SessionsTab({ messages }: { messages: WsMessage[] }) {
   }, [messages, activeSession]);
 
   return (
-    <div className="flex flex-col md:flex-row gap-4 h-[calc(100vh-220px)] md:h-[calc(100vh-200px)] animate-fade-up w-full">
+    <div className="flex h-full min-h-0 w-full animate-fade-up flex-col gap-4 md:flex-row">
       <div className={`${activeId ? 'hidden md:flex' : 'flex'} w-full md:w-72 shrink-0 glass-card p-4 flex-col gap-3 h-full overflow-hidden`}>
         {agentNames.length > 1 && (
           <div className="flex gap-1 px-1 py-1 rounded-xl overflow-x-auto scrollbar-none shrink-0 w-full" style={{ background: 'rgba(255,255,255,0.03)' }}>
@@ -1211,7 +1217,23 @@ function LogsTab({ messages }: any) {
   const [sourceFilter, setSourceFilter] = useState<string>('all');
   const [dayFilter, setDayFilter] = useState<string>('all');
   const [autoFollow, setAutoFollow] = useState(true);
+  const [otelLogs, setOtelLogs] = useState<any[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Fetch OTel logs on mount and poll every 5s
+  useEffect(() => {
+    const fetchOtelLogs = () => {
+      fetch('/api/v1/otlp/logs/recent')
+        .then(res => res.json())
+        .then(json => {
+          if (Array.isArray(json)) setOtelLogs(json);
+        })
+        .catch(err => console.error("Failed to fetch OTel logs:", err));
+    };
+    fetchOtelLogs();
+    const interval = setInterval(fetchOtelLogs, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   const gatewayLogs = useMemo(() => messages.filter((m: WsMessage) => m.type === 'gateway_log_event'), [messages]);
 
@@ -1242,8 +1264,11 @@ function LogsTab({ messages }: any) {
     message: string;
     raw: Record<string, unknown>;
     logPath: string;
+    isOtel?: boolean;
+    meta?: Record<string, unknown>;
   }>>(() => {
-    return gatewayLogs.flatMap((ev: WsMessage, eventIndex: number) =>
+    // 1. Process Gateway Logs
+    const parsedGatewayLogs = gatewayLogs.flatMap((ev: WsMessage, eventIndex: number) =>
       (ev.lines || []).map((line: any, lineIndex: number) => {
         const raw = typeof line === 'string' ? { raw_text: line } : (line || {});
         
@@ -1319,10 +1344,63 @@ function LogsTab({ messages }: any) {
           message,
           raw,
           logPath: raw.log_path || ev.log_path || '',
+          isOtel: false,
+          meta: {}
         };
       })
     );
-  }, [gatewayLogs, inferLogLevel, normalizeLogLevel]);
+
+    // 2. Process OTel Logs
+    const parsedOtelLogs = otelLogs.map(ol => {
+      const tsMs = Math.floor(ol.TimestampUnix / 1000000);
+      const d = new Date(tsMs);
+      const timestamp = d.toISOString();
+      const day = timestamp.slice(0, 10);
+      
+      let attrs = {};
+      try {
+        if (typeof ol.Attributes === 'string') attrs = JSON.parse(ol.Attributes);
+        else if (ol.Attributes) attrs = ol.Attributes;
+      } catch(e) {}
+
+      let source = 'otel.log';
+      if ((attrs as any).logger_name) source = (attrs as any).logger_name;
+      else if ((attrs as any).name) source = (attrs as any).name;
+      const eventName = (attrs as any).event_name || 'otel.event';
+      const sessionId = (attrs as any).session_id || '';
+      const traceId = ol.TraceID || '';
+      const toolName = (attrs as any).tool_name || '';
+      const model = (attrs as any).model || '';
+      const provider = (attrs as any).provider || '';
+      const errorType = (attrs as any).error_type || '';
+
+      const level = normalizeLogLevel(ol.SeverityText || 'info');
+
+      return {
+        id: `otel-${ol.ID}-${ol.SpanID || ol.TraceID}`,
+        timestamp,
+        day,
+        level,
+        source: `${source}:${eventName}`,
+        message: ol.Body || 'No message body',
+        raw: ol,
+        logPath: 'OTLP Stream',
+        isOtel: true,
+        meta: {
+          ...attrs,
+          event_name: eventName,
+          session_id: sessionId,
+          trace_id: traceId,
+          tool_name: toolName,
+          model,
+          provider,
+          error_type: errorType,
+        }
+      };
+    });
+
+    return [...parsedGatewayLogs, ...parsedOtelLogs];
+  }, [gatewayLogs, otelLogs, inferLogLevel, normalizeLogLevel]);
 
   const sourceOptions = useMemo<string[]>(
     () => Array.from(new Set<string>(logEntries.map((entry) => entry.source))).sort(),
@@ -1349,6 +1427,7 @@ function LogsTab({ messages }: any) {
       entry.message,
       entry.source,
       entry.logPath,
+      JSON.stringify(entry.meta || {}),
       JSON.stringify(entry.raw),
     ].some((value) => value.toLowerCase().includes(q));
   });
@@ -1483,12 +1562,50 @@ function LogsTab({ messages }: any) {
                     {entry.level}
                   </span>
                   
-                  <span className="text-[10px] font-mono truncate w-[160px] shrink-0" style={{ color: 'rgba(255,255,255,0.5)' }}>
-                    {entry.source}
-                  </span>
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 w-[160px] shrink-0">
+                    <span className="text-[10px] font-mono truncate max-w-full" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                      {entry.source}
+                    </span>
+                    {entry.isOtel && (
+                      <span className="text-[8px] px-1 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 shrink-0">
+                        OTLP
+                      </span>
+                    )}
+                  </div>
                   
-                  <div className="text-xs flex-1 whitespace-pre-wrap break-words leading-relaxed" style={{ color: 'rgba(255,255,255,0.85)' }}>
-                    {entry.message}
+                  <div className="flex-1">
+                    {entry.isOtel && entry.meta && (
+                      <div className="mb-1 flex flex-wrap gap-1">
+                        {typeof entry.meta.event_name === 'string' && entry.meta.event_name && (
+                          <span className="rounded border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-[9px] text-blue-300">
+                            {String(entry.meta.event_name)}
+                          </span>
+                        )}
+                        {typeof entry.meta.session_id === 'string' && entry.meta.session_id && (
+                          <span className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 font-mono text-[9px] text-white/50">
+                            {String(entry.meta.session_id).slice(0, 18)}
+                          </span>
+                        )}
+                        {typeof entry.meta.tool_name === 'string' && entry.meta.tool_name && (
+                          <span className="rounded border border-yellow-500/30 bg-yellow-500/10 px-1.5 py-0.5 text-[9px] text-yellow-300">
+                            {String(entry.meta.tool_name)}
+                          </span>
+                        )}
+                        {typeof entry.meta.model === 'string' && entry.meta.model && (
+                          <span className="rounded border border-purple-500/30 bg-purple-500/10 px-1.5 py-0.5 text-[9px] text-purple-300">
+                            {String(entry.meta.model)}
+                          </span>
+                        )}
+                        {typeof entry.meta.error_type === 'string' && entry.meta.error_type && (
+                          <span className="rounded border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 text-[9px] text-red-300">
+                            {String(entry.meta.error_type)}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    <div className="text-xs whitespace-pre-wrap break-words leading-relaxed" style={{ color: 'rgba(255,255,255,0.85)' }}>
+                      {entry.message}
+                    </div>
                   </div>
                 </div>
                 
@@ -1530,6 +1647,10 @@ export default function App() {
   const wsUrl = `ws://${host}/api/v1/ws`;
   const { messages, connected } = useWebSocket(wsUrl);
   const [tab, setTab] = useState<typeof TABS[number]>('overview');
+  const selfManagedScrollTabs = new Set<typeof TABS[number]>(['sessions', 'logs', 'trace']);
+  const contentClasses = selfManagedScrollTabs.has(tab)
+    ? 'flex-1 min-h-0 overflow-hidden p-4 sm:p-6'
+    : 'flex-1 min-h-0 overflow-y-auto scrollbar-thin p-4 sm:p-6';
 
   return (
     <div className="h-screen flex flex-col overflow-hidden text-white font-sans bg-black relative">
@@ -1540,17 +1661,21 @@ export default function App() {
         zIndex: 0,
       }} />
 
-      <div className="relative z-10 flex flex-col h-screen">
+      <div className="relative z-10 flex min-h-0 flex-1 flex-col">
         <Header connected={connected} messages={messages} />
         <TabBar tab={tab} setTab={setTab} />
 
-        <div className="flex-1 overflow-hidden p-4 sm:p-6">
+        <div className={contentClasses}>
           {tab === 'overview' && <OverviewTab messages={messages} />}
           {tab === 'tokens' && <TokensTab messages={messages} />}
           {tab === 'sessions' && <SessionsTab messages={messages} />}
           {tab === 'cron' && <CronTab messages={messages} />}
           {tab === 'workspace' && <WorkspaceTab messages={messages} />}
           {tab === 'logs' && <LogsTab messages={messages} />}
+          {tab === 'cost' && <OtelCostDashboard />}
+          {tab === 'trace' && <OtelTraceView />}
+          {tab === 'metrics' && <OtelMetricsDashboard />}
+          {tab === 'security' && <OtelSecurityDashboard />}
         </div>
       </div>
     </div>

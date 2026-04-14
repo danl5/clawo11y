@@ -5,11 +5,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/danl5/clawo11y/services/agent/client"
 	"github.com/danl5/clawo11y/services/agent/monitor"
+	"github.com/danl5/clawo11y/services/agent/otlp"
 	"github.com/danl5/clawo11y/services/agent/schemas"
 	"github.com/danl5/clawo11y/services/agent/watcher"
 )
@@ -18,6 +20,26 @@ const (
 	chanBufferSize = 50000
 	metricsBufSize = 100
 )
+
+func getEnvString(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		log.Printf("Invalid integer for %s=%q, using default %d", key, value, fallback)
+		return fallback
+	}
+	return parsed
+}
 
 func detectOpenClawDirs() (agentsBaseDir, cronPath, workspaceBaseDir, gatewayLogDir string) {
 	// Let user override via environment variable
@@ -54,10 +76,15 @@ func detectOpenClawDirs() (agentsBaseDir, cronPath, workspaceBaseDir, gatewayLog
 }
 
 func main() {
-	serverURL := os.Getenv("O11Y_SERVER_URL")
-	if serverURL == "" {
-		serverURL = "http://127.0.0.1:8000"
-	}
+	serverURL := getEnvString("O11Y_SERVER_URL", "http://127.0.0.1:8000")
+	otlpProxyAddr := getEnvString("O11Y_OTLP_PROXY_ADDR", "127.0.0.1:4318")
+	metricsIntervalSec := getEnvInt("O11Y_METRICS_INTERVAL_SEC", 60)
+	requestConcurrency := getEnvInt("O11Y_REQUEST_CONCURRENCY", 3)
+	clientTimeoutSec := getEnvInt("O11Y_CLIENT_TIMEOUT_SEC", 10)
+	clientRetryCount := getEnvInt("O11Y_CLIENT_RETRY_COUNT", 3)
+	clientRetryWaitMs := getEnvInt("O11Y_CLIENT_RETRY_WAIT_MS", 1000)
+	otlpProxyQueueSize := getEnvInt("O11Y_OTLP_PROXY_QUEUE_SIZE", 5000)
+	otlpProxyRetryIntervalSec := getEnvInt("O11Y_OTLP_PROXY_RETRY_INTERVAL_SEC", 5)
 
 	agentsBaseDir, cronPath, workspaceBaseDir, gatewayLogDir := detectOpenClawDirs()
 
@@ -66,9 +93,15 @@ func main() {
 
 	sysMonitor := monitor.NewSystemMonitor()
 	nodeInfo := sysMonitor.GetNodeInfo()
-	srvClient := client.NewServerClient(serverURL)
+	srvClient := client.NewServerClient(serverURL, &client.ClientOptions{
+		Timeout:       time.Duration(clientTimeoutSec) * time.Second,
+		RetryCount:    clientRetryCount,
+		RetryWaitTime: time.Duration(clientRetryWaitMs) * time.Millisecond,
+	})
 
 	log.Printf("Starting OpenClaw O11y Agent for node: %s", nodeInfo.NodeID)
+	log.Printf("Agent config — server_url: %s, otlp_proxy_addr: %s, metrics_interval_sec: %d, request_concurrency: %d, client_timeout_sec: %d, client_retry_count: %d, client_retry_wait_ms: %d, otlp_proxy_queue_size: %d, otlp_proxy_retry_interval_sec: %d",
+		serverURL, otlpProxyAddr, metricsIntervalSec, requestConcurrency, clientTimeoutSec, clientRetryCount, clientRetryWaitMs, otlpProxyQueueSize, otlpProxyRetryIntervalSec)
 
 	for i := 0; i < 5; i++ {
 		if err := srvClient.RegisterNode(nodeInfo); err != nil {
@@ -120,11 +153,11 @@ func main() {
 	metricsChan := make(chan schemas.SystemMetricsPayload, metricsBufSize)
 
 	// Semaphore to prevent DDoSing the server and causing SQLite "unable to open database file"
-	requestSem := make(chan struct{}, 3)
+	requestSem := make(chan struct{}, requestConcurrency)
 
 	// Metrics collector goroutine — isolated so it doesn't block on slow sends
 	go func() {
-		ticker := time.NewTicker(60 * time.Second)
+		ticker := time.NewTicker(time.Duration(metricsIntervalSec) * time.Second)
 		defer ticker.Stop()
 
 		// Send an initial metric immediately on boot
@@ -132,7 +165,7 @@ func main() {
 
 		// Fake a point 60s ago to allow React Recharts to draw a line immediately
 		pastMetrics := initialMetrics
-		pastMetrics.Timestamp = time.Now().Add(-60 * time.Second).UTC()
+		pastMetrics.Timestamp = time.Now().Add(-time.Duration(metricsIntervalSec) * time.Second).UTC()
 		metricsChan <- pastMetrics
 
 		metricsChan <- initialMetrics
@@ -145,6 +178,17 @@ func main() {
 			default:
 				// Drop if full — metrics are less critical than events
 			}
+		}
+	}()
+
+	// Start OTLP Proxy to forward traces from OpenClaw to the central O11y Server
+	otlpProxy := otlp.NewOtlpProxy(srvClient, &otlp.ProxyOptions{
+		QueueSize:     otlpProxyQueueSize,
+		RetryInterval: time.Duration(otlpProxyRetryIntervalSec) * time.Second,
+	})
+	go func() {
+		if err := otlpProxy.Start(otlpProxyAddr); err != nil {
+			log.Printf("OTLP Proxy failed to start: %v", err)
 		}
 	}()
 
