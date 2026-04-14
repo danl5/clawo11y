@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -135,23 +137,15 @@ func main() {
 		v1.GET("/ws", api.WebsocketEndpoint)
 	}
 
-	// Serve Static Files (if any)
+	// Serve the SPA without registering a root catch-all route that conflicts with /api.
 	webDist := "services/web/dist"
 	if stat, err := os.Stat(webDist); err == nil && stat.IsDir() {
-		// Serve static files
-		router.Static("/", webDist)
-		// For SPA routing
-		router.NoRoute(func(c *gin.Context) {
-			c.File(webDist + "/index.html")
-		})
+		registerSpaFallback(router, webDist)
 	} else {
 		// Fallback for local development
 		webDistDev := "../web/dist"
 		if stat, err := os.Stat(webDistDev); err == nil && stat.IsDir() {
-			router.Static("/", webDistDev)
-			router.NoRoute(func(c *gin.Context) {
-				c.File(webDistDev + "/index.html")
-			})
+			registerSpaFallback(router, webDistDev)
 		}
 	}
 
@@ -193,4 +187,36 @@ func main() {
 	}
 
 	log.Println("Server exiting")
+}
+
+func registerSpaFallback(router *gin.Engine, webDist string) {
+	indexPath := filepath.Join(webDist, "index.html")
+
+	router.NoRoute(func(c *gin.Context) {
+		path := c.Request.URL.Path
+		if strings.HasPrefix(path, "/api/") || path == "/api" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+			c.Status(http.StatusNotFound)
+			return
+		}
+
+		cleanPath := filepath.Clean(strings.TrimPrefix(path, "/"))
+		if cleanPath == "." || cleanPath == "" {
+			c.File(indexPath)
+			return
+		}
+
+		candidate := filepath.Join(webDist, cleanPath)
+		if rel, err := filepath.Rel(webDist, candidate); err == nil && !strings.HasPrefix(rel, "..") {
+			if stat, err := os.Stat(candidate); err == nil && !stat.IsDir() {
+				c.File(candidate)
+				return
+			}
+		}
+
+		c.File(indexPath)
+	})
 }
