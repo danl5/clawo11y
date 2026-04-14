@@ -175,6 +175,8 @@ Recommended for real worker/server separation.
 #### Central Server
 
 ```bash
+mkdir -p /opt/clawo11y/bin /opt/clawo11y/data
+
 # Build frontend assets
 cd /opt/clawo11y/services/web
 npm install
