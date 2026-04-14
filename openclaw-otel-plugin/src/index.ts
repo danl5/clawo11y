@@ -44,7 +44,8 @@ const pendingSessionAttributes = new Map<string, Record<string, string | number 
 const rootIdleTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const sessionRunStats = new Map<string, SessionRunStats>();
 
-// Default pricing per 1 million tokens if not configured
+// Default pricing per 1 million tokens if not configured.
+// The config also accepts input/output aliases for providers that document prices that way.
 const DEFAULT_PRICING = {
   "gpt-4o": { prompt: 5.0, completion: 15.0 },
   "claude-3-5": { prompt: 3.0, completion: 15.0 },
@@ -66,16 +67,19 @@ function sanitizePayload(data: any): string {
 function calculateCost(model: string | undefined, promptTokens: number, completionTokens: number, customPricing: any): number {
   let pRate = 0;
   let cRate = 0;
-  const modelName = typeof model === "string" ? model : "";
+  const modelName = typeof model === "string" ? model.toLowerCase() : "";
 
   // Merge default pricing with user-configured pricing
   const pricingConfig = { ...DEFAULT_PRICING, ...(customPricing || {}) };
 
   // Find matching model pricing (using includes for partial matches like "gpt-4o-2024-05-13")
   for (const [key, rates] of Object.entries(pricingConfig)) {
-    if (modelName.includes(key)) {
-      pRate = (rates as any).prompt / 1000000;
-      cRate = (rates as any).completion / 1000000;
+    const normalizedKey = String(key).toLowerCase();
+    const promptRate = Number((rates as any)?.prompt ?? (rates as any)?.input ?? 0);
+    const completionRate = Number((rates as any)?.completion ?? (rates as any)?.output ?? 0);
+    if (modelName.includes(normalizedKey)) {
+      pRate = promptRate / 1000000;
+      cRate = completionRate / 1000000;
       break;
     }
   }

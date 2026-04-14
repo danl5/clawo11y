@@ -30,12 +30,14 @@
       },
       "pricing": {
         "type": "object",
-        "description": "Custom pricing dictionary per 1M tokens",
+        "description": "Custom pricing dictionary per 1M tokens. Supports prompt/completion or input/output keys.",
         "additionalProperties": {
           "type": "object",
           "properties": {
             "prompt": { "type": "number" },
-            "completion": { "type": "number" }
+            "completion": { "type": "number" },
+            "input": { "type": "number" },
+            "output": { "type": "number" }
           }
         }
       }
