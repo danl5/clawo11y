@@ -1,5 +1,11 @@
 # <img src="services/web/public/favicon.svg" width="32" height="32" alt="OpenClaw O11y Logo" style="vertical-align: middle;"> OpenClaw O11y
 
+[![Test](https://github.com/danl5/clawo11y/actions/workflows/run-test.yml/badge.svg)](https://github.com/danl5/clawo11y/actions/workflows/run-test.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/danl5/clawo11y/services/server)](https://goreportcard.com/report/github.com/danl5/clawo11y/services/server)
+[![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-enabled-purple.svg)](https://opentelemetry.io/)
+[![OpenClaw](https://img.shields.io/badge/OpenClaw-plugin-orange.svg)](https://openclaw.ai/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
 OpenClaw O11y is an observability stack for OpenClaw agents.
 
 It combines:
