@@ -6,6 +6,7 @@ export function useWebSocket(url: string) {
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const shouldReconnect = useRef(true);
 
   const initData = useCallback(async () => {
     try {
@@ -40,12 +41,14 @@ export function useWebSocket(url: string) {
 
     ws.onclose = () => {
       setConnected(false);
+      if (!shouldReconnect.current) return;
       console.log('[WS] Disconnected, reconnecting in 3s...');
       reconnectTimer.current = setTimeout(connect, 3000);
     };
 
-    ws.onerror = (err) => {
-      console.error('[WS] Error', err);
+    ws.onerror = () => {
+      if (!shouldReconnect.current) return;
+      console.warn('[WS] Connection error, retrying...');
       ws.close();
     };
 
@@ -53,8 +56,10 @@ export function useWebSocket(url: string) {
   }, [url]);
 
   useEffect(() => {
+    shouldReconnect.current = true;
     connect();
     return () => {
+      shouldReconnect.current = false;
       clearTimeout(reconnectTimer.current);
       wsRef.current?.close();
     };
