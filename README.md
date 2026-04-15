@@ -175,41 +175,50 @@ The script builds:
 
 and starts the local stack.
 
-### 3. Bare-Metal / Systemd
+### 3. Bare-Metal Deployment
 
 Recommended for real worker/server separation.
 
 #### Central Server
 
 ```bash
-mkdir -p /opt/clawo11y/bin /opt/clawo11y/data
+ mkdir -p <clawo11y-dir>/bin <clawo11y-dir>/data
 
-# Build frontend assets
-cd /opt/clawo11y/services/web
-npm install
-npm run build
+# Build frontend assets and the Go server binary
+ cd <clawo11y-dir>
+ make build-web build-server
 
-# Build Go server binary
-cd /opt/clawo11y/services/server
-go build -o /opt/clawo11y/bin/clawo11y-server .
-
-# Install systemd unit
-sudo cp /opt/clawo11y/scripts/o11y-server.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now o11y-server
+# Start the server directly
+ ./bin/clawo11y-server
 ```
 
 #### Worker Agent
 
 ```bash
 # Build or download the worker agent binary
-cd /opt/clawo11y/services/agent
-go build -o /opt/clawo11y/bin/clawo11y-agent .
+ cd <clawo11y-dir>
+ make build-agent
 
-# Install systemd unit
-sudo cp /opt/clawo11y/scripts/o11y-agent.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now o11y-agent
+# Start the worker directly
+ O11Y_SERVER_URL=http://<server-host>:<server-port> ./bin/clawo11y-agent
+```
+
+#### Optional: systemd
+
+If you want the server or agent to be managed by `systemctl`, use the sample service files in `scripts/`:
+
+```bash
+# Review and adjust the service file first if ExecStart, WorkingDirectory,
+# User, Environment, or network/port settings differ in your deployment.
+ sudo cp <clawo11y-dir>/scripts/o11y-server.service /etc/systemd/system/
+ sudo systemctl daemon-reload
+ sudo systemctl enable --now o11y-server
+
+# Review and adjust the service file first if ExecStart, WorkingDirectory,
+# User, Environment, or endpoint settings differ in your deployment.
+ sudo cp <clawo11y-dir>/scripts/o11y-agent.service /etc/systemd/system/
+ sudo systemctl daemon-reload
+ sudo systemctl enable --now o11y-agent
 ```
 
 #### OpenClaw Plugin
@@ -217,7 +226,7 @@ sudo systemctl enable --now o11y-agent
 Install the plugin from the local path:
 
 ```bash
-openclaw plugins install /opt/clawo11y/openclaw-otel-plugin
+ openclaw plugins install <clawo11y-dir>/openclaw-otel-plugin
 ```
 
 Then configure it in `~/.openclaw/openclaw.json`:
@@ -238,6 +247,10 @@ Then configure it in `~/.openclaw/openclaw.json`:
     }
   }
 }
+```
+```bash
+# restart OpenClaw gateway
+ openclaw gateway restart 
 ```
 
 If you change the agent-side OTLP proxy address, make sure the plugin `config.endpoint` matches it.
