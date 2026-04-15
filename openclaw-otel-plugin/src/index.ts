@@ -121,7 +121,6 @@ export default function registerPlugin(api: OpenClawPluginApi) {
   const metricIntervalMs = getConfig("metric_interval_ms", 10000);
   const exportTimeoutMs = getConfig("export_timeout_ms", 5000);
   const rootIdleTimeoutMs = getConfig("root_idle_timeout_ms", 60000);
-  const mirrorTraceDebugToConsole = getConfig("debug_trace_to_console", true) !== false;
   
   const resource = new Resource({
     [SemanticResourceAttributes.SERVICE_NAME]: "openclaw-agent",
@@ -367,7 +366,6 @@ export default function registerPlugin(api: OpenClawPluginApi) {
     const primaryChildKey = activeSubagentPrimaryKeys.get(childSessionKey) || childSessionKey;
     if (activeSubagentSources.get(primaryChildKey) !== "sessions_spawn_fallback") return;
 
-    const parentSessionKey = activeSubagentParents.get(childSessionKey);
     const span = activeSubagentSpans.get(childSessionKey);
     if (!span) return;
     const metadata = activeSubagentMetadata.get(primaryChildKey);
@@ -396,19 +394,6 @@ export default function registerPlugin(api: OpenClawPluginApi) {
       }
     }
 
-    emitLog(SeverityNumber.DEBUG, "DEBUG", "trace.debug.subagent_fallback_closed", `sessions_spawn fallback closed for child session ${childSessionKey}`, {
-      session_id: parentSessionKey,
-      close_reason: "child_agent_end",
-      run_status: stats?.hadError ? "error" : "ok",
-      duration_ms: durationMs,
-      total_tokens: stats?.totalTokens ?? 0,
-      total_cost_usd: Number((stats?.totalCostUsd ?? 0).toFixed(6)),
-      subagent_label: metadata?.label,
-      agent_id: metadata?.agentId,
-      mode: metadata?.mode,
-      ...getSubagentDebugAttributes(childSessionKey, parentSessionKey, childSessionKey),
-    }, span);
-
     span.end();
     unregisterSubagentAliases(childSessionKey);
   };
@@ -431,61 +416,6 @@ export default function registerPlugin(api: OpenClawPluginApi) {
     return normalized;
   };
 
-  const toDebugStringArray = (...candidates: any[]) => {
-    return candidates
-      .filter((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0)
-      .map((candidate) => candidate.trim());
-  };
-
-  const getSessionDebugAttributes = (canonicalSessionKey: string | undefined, ...rawCandidates: any[]) => {
-    const rawKeys = toDebugStringArray(...rawCandidates);
-    const aliasSeed = canonicalSessionKey
-      ? activeSessionAliasGroups.get(canonicalSessionKey)
-      : undefined;
-    const aliases = Array.from(
-      new Set<string>([
-        ...(aliasSeed ? Array.from(aliasSeed) : []),
-        ...resolveSessionAliases(canonicalSessionKey, ...rawKeys),
-      ]),
-    ).sort();
-
-    return {
-      canonical_session_key: canonicalSessionKey,
-      raw_session_keys: JSON.stringify(rawKeys),
-      session_aliases: JSON.stringify(aliases),
-      session_alias_count: aliases.length,
-    };
-  };
-
-  const getSubagentDebugAttributes = (
-    canonicalChildKey: string | undefined,
-    parentSessionKey: string | undefined,
-    ...rawCandidates: any[]
-  ) => {
-    const rawKeys = toDebugStringArray(...rawCandidates);
-    const primaryChildKey = canonicalChildKey
-      ? (activeSubagentPrimaryKeys.get(canonicalChildKey) || canonicalChildKey)
-      : undefined;
-    const aliasSeed = primaryChildKey
-      ? activeSubagentAliasGroups.get(primaryChildKey)
-      : undefined;
-    const aliases = Array.from(
-      new Set<string>([
-        ...(aliasSeed ? Array.from(aliasSeed) : []),
-        ...resolveSessionAliases(primaryChildKey, canonicalChildKey, ...rawKeys),
-      ]),
-    ).sort();
-
-    return {
-      parent_session_key: parentSessionKey,
-      canonical_child_session_key: canonicalChildKey,
-      primary_child_session_key: primaryChildKey,
-      raw_child_keys: JSON.stringify(rawKeys),
-      child_session_aliases: JSON.stringify(aliases),
-      child_session_alias_count: aliases.length,
-    };
-  };
-
   const emitLog = (
     severityNumber: SeverityNumber,
     severityText: string,
@@ -503,10 +433,6 @@ export default function registerPlugin(api: OpenClawPluginApi) {
         ...attributes,
       }),
     };
-
-    if (mirrorTraceDebugToConsole && eventName.startsWith("trace.debug.")) {
-      api.logger.info(`[ClawO11y][${eventName}] ${payload.body} ${JSON.stringify(payload.attributes)}`);
-    }
 
     if (span) {
       context.with(trace.setSpan(context.active(), span), () => otelLogger.emit(payload));
@@ -763,12 +689,6 @@ export default function registerPlugin(api: OpenClawPluginApi) {
       },
       span,
     );
-    emitLog(SeverityNumber.DEBUG, "DEBUG", "trace.debug.run_resolution", `Run finished via ${reason} for session ${sessionKey}`, {
-      close_reason: reason,
-      run_status: stats?.hadError ? "error" : "ok",
-      root_present: true,
-      ...getSessionDebugAttributes(sessionKey, sessionKey),
-    }, span);
     maybeFinalizeFallbackSubagent(sessionKey, stats);
     if (stats) {
       const runMetricAttrs = {
@@ -867,13 +787,6 @@ export default function registerPlugin(api: OpenClawPluginApi) {
        user_message: pendingSessionAttributes.get(sessionKey)?.user_message,
        user_message_len: pendingSessionAttributes.get(sessionKey)?.user_message_len,
      }, activeSpans.get(`root_${sessionKey}`));
-     emitLog(SeverityNumber.DEBUG, "DEBUG", "trace.debug.session_resolved", `Inbound claim resolved to canonical session ${sessionKey}`, {
-       trigger: "inbound_claim",
-       ...getSessionDebugAttributes(sessionKey, ctx.sessionKey, ctx.sessionId),
-       agent_name: stats?.agentName,
-       channel: stats?.channel,
-     }, activeSpans.get(`root_${sessionKey}`));
-
      return ctx;
   });
 
@@ -884,13 +797,9 @@ export default function registerPlugin(api: OpenClawPluginApi) {
        event?.sessionId,
        agentCtx?.sessionId,
      );
-     emitLog(SeverityNumber.DEBUG, "DEBUG", "trace.debug.agent_end_received", `agent_end received for canonical session ${sessionKey || "unknown"}`, {
-       ...getSessionDebugAttributes(sessionKey, event?.sessionKey, agentCtx?.sessionKey, event?.sessionId, agentCtx?.sessionId),
-     });
      if (sessionKey && !activeSpans.get(`root_${sessionKey}`)) {
        recordTelemetryAnomaly("run.agent_end_without_root", `agent_end received without active root span for session ${sessionKey}`, {
          session_id: sessionKey,
-         ...getSessionDebugAttributes(sessionKey, event?.sessionKey, agentCtx?.sessionKey, event?.sessionId, agentCtx?.sessionId),
        });
      }
      if (sessionKey) closeRootSpan(sessionKey, "agent_end");
@@ -1273,19 +1182,6 @@ export default function registerPlugin(api: OpenClawPluginApi) {
               subagent_label: subagentLabel,
               mode: subagentMode || "run",
             });
-            emitLog(SeverityNumber.DEBUG, "DEBUG", "trace.debug.subagent_fallback_linked", `sessions_spawn fallback linked child session ${spawnInfo.childSessionKey}`, {
-              trigger: "after_tool_call",
-              tool_name: "sessions_spawn",
-              tool_call_id: toolKey,
-              session_id: sessionKey,
-              ...getSubagentDebugAttributes(
-                spawnInfo.childSessionKey,
-                sessionKey,
-                spawnInfo.childSessionKey,
-                spawnInfo.runId,
-                spawnInfo.agentId,
-              ),
-            }, fallbackSpan);
           }
         }
       }
@@ -1350,20 +1246,6 @@ export default function registerPlugin(api: OpenClawPluginApi) {
       event?.runId,
       subagentCtx?.runId,
     );
-    emitLog(SeverityNumber.DEBUG, "DEBUG", "trace.debug.subagent_linked", `Subagent linked under parent session ${requesterSessionKey}`, {
-      trigger: "subagent_spawning",
-      session_id: requesterSessionKey,
-      ...getSubagentDebugAttributes(
-        childSessionKey,
-        requesterSessionKey,
-        event?.childSessionKey,
-        subagentCtx?.childSessionKey,
-        event?.targetSessionKey,
-        subagentCtx?.targetSessionKey,
-        event?.runId,
-        subagentCtx?.runId,
-      ),
-    }, span);
     activeTimers.set(`subagent_${childSessionKey}`, Date.now());
     subagentCallCounter.add(1, {
       subagent_label: resolveSubagentLabel(event),
@@ -1398,16 +1280,6 @@ export default function registerPlugin(api: OpenClawPluginApi) {
       recordTelemetryAnomaly("subagent.orphaned_spawned", `subagent_spawned received without active subagent span for child session ${childSessionKey}`, {
         child_session_id: childSessionKey,
         session_id: parentSessionKey,
-        ...getSubagentDebugAttributes(
-          childSessionKey,
-          parentSessionKey,
-          event?.childSessionKey,
-          subagentCtx?.childSessionKey,
-          event?.targetSessionKey,
-          subagentCtx?.targetSessionKey,
-          event?.runId,
-          subagentCtx?.runId,
-        ),
       });
       return;
     }
@@ -1417,19 +1289,6 @@ export default function registerPlugin(api: OpenClawPluginApi) {
     }
     if (parentSessionKey && span) {
       registerSubagentAliases(childSessionKey, parentSessionKey, span, "hook", event?.runId);
-      emitLog(SeverityNumber.DEBUG, "DEBUG", "trace.debug.subagent_spawned_resolved", `subagent_spawned resolved for child session ${childSessionKey}`, {
-        session_id: parentSessionKey,
-        ...getSubagentDebugAttributes(
-          childSessionKey,
-          parentSessionKey,
-          event?.childSessionKey,
-          subagentCtx?.childSessionKey,
-          event?.targetSessionKey,
-          subagentCtx?.targetSessionKey,
-          event?.runId,
-          subagentCtx?.runId,
-        ),
-      }, span);
     }
   });
 
@@ -1450,16 +1309,6 @@ export default function registerPlugin(api: OpenClawPluginApi) {
       recordTelemetryAnomaly("subagent.orphaned_end", `subagent_ended received without active subagent span for child session ${childSessionKey}`, {
         child_session_id: childSessionKey,
         session_id: parentSessionKey,
-        ...getSubagentDebugAttributes(
-          childSessionKey,
-          parentSessionKey,
-          event?.childSessionKey,
-          subagentCtx?.childSessionKey,
-          event?.targetSessionKey,
-          subagentCtx?.targetSessionKey,
-          event?.runId,
-          subagentCtx?.runId,
-        ),
       });
       return;
     }
@@ -1516,19 +1365,6 @@ export default function registerPlugin(api: OpenClawPluginApi) {
       mode: resolveString(event?.mode) || "unknown",
     });
     if (parentSessionKey) syncRootSummary(parentSessionKey);
-    emitLog(SeverityNumber.DEBUG, "DEBUG", "trace.debug.subagent_ended_resolved", `subagent_ended resolved for child session ${childSessionKey}`, {
-      session_id: parentSessionKey,
-      ...getSubagentDebugAttributes(
-        childSessionKey,
-        parentSessionKey,
-        event?.childSessionKey,
-        subagentCtx?.childSessionKey,
-        event?.targetSessionKey,
-        subagentCtx?.targetSessionKey,
-        event?.runId,
-        subagentCtx?.runId,
-      ),
-    }, span);
     span.end();
     unregisterSubagentAliases(childSessionKey, event?.runId, subagentCtx?.runId);
   });
