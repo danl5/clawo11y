@@ -118,6 +118,68 @@ interface OtelHealth {
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#34d399', '#fb923c', '#f472b6', '#60a5fa', '#a78bfa'];
 
+const EMPTY_OVERVIEW: OtelOverview = {
+  summary: {
+    window_hours: 24,
+    total_runs: 0,
+    errored_runs: 0,
+    avg_run_duration_ms: 0,
+    total_tokens: 0,
+    total_cost_usd: 0,
+  },
+  recent_runs: [],
+  models: [],
+  tools: [],
+  subagents: [],
+  log_events: [],
+};
+
+const EMPTY_HEALTH: OtelHealth = {
+  summary: {
+    window_hours: 24,
+    anomaly_count: 0,
+    idle_timeout_closures: 0,
+    root_recreated_count: 0,
+    orphan_event_count: 0,
+    agent_end_without_root: 0,
+  },
+  anomaly_types: [],
+  close_reasons: [],
+  recent_anomalies: [],
+};
+
+export function normalizeOverview(value: unknown): OtelOverview | null {
+  if (!value || typeof value !== 'object') return null;
+  const input = value as Partial<OtelOverview>;
+  const summary = input.summary && typeof input.summary === 'object'
+    ? { ...EMPTY_OVERVIEW.summary, ...input.summary }
+    : EMPTY_OVERVIEW.summary;
+
+  return {
+    summary,
+    recent_runs: Array.isArray(input.recent_runs) ? input.recent_runs : [],
+    models: Array.isArray(input.models) ? input.models : [],
+    tools: Array.isArray(input.tools) ? input.tools : [],
+    subagents: Array.isArray(input.subagents) ? input.subagents : [],
+    log_events: Array.isArray(input.log_events) ? input.log_events : [],
+  };
+}
+
+export function normalizeHealth(value: unknown): OtelHealth | null {
+  if (!value || typeof value !== 'object') return null;
+  const input = value as Partial<OtelHealth>;
+  const summary = input.summary && typeof input.summary === 'object'
+    ? { ...EMPTY_HEALTH.summary, ...input.summary }
+    : EMPTY_HEALTH.summary;
+
+  return {
+    summary,
+    anomaly_types: Array.isArray(input.anomaly_types) ? input.anomaly_types : [],
+    close_reasons: Array.isArray(input.close_reasons) ? input.close_reasons : [],
+    recent_anomalies: Array.isArray(input.recent_anomalies) ? input.recent_anomalies : [],
+  };
+}
+
 function formatNumber(value: number) {
   return new Intl.NumberFormat('en-US').format(value);
 }
@@ -199,12 +261,8 @@ export function OtelMetricsDashboard() {
           if (Array.isArray(metricsJson)) {
             setSeries(metricsJson);
           }
-          if (overviewJson && typeof overviewJson === 'object') {
-            setOverview(overviewJson as OtelOverview);
-          }
-          if (healthJson && typeof healthJson === 'object') {
-            setHealth(healthJson as OtelHealth);
-          }
+          setOverview(normalizeOverview(overviewJson));
+          setHealth(normalizeHealth(healthJson));
           setLoading(false);
         })
         .catch((err) => {

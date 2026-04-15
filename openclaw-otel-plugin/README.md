@@ -111,9 +111,9 @@ Add:
         "enabled": true,
         "config": {
           "endpoint": "http://localhost:4318",
-          "metric_interval_ms": 10000,
-          "export_timeout_ms": 5000,
-          "root_idle_timeout_ms": 60000,
+          "metric_interval_ms": 30000,
+          "export_timeout_ms": 10000,
+          "root_idle_timeout_ms": 300000,
           "pricing": {
             "qwen-max": { "prompt": 1.5, "completion": 4.5 },
             "claude-3-opus": { "prompt": 15.0, "completion": 75.0 },
