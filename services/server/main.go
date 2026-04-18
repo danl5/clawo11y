@@ -124,6 +124,7 @@ func main() {
 			otlpGroup.GET("/dashboard/security", api.GetOtelSecurityTimeline)
 			otlpGroup.GET("/dashboard/context-bloat", api.GetOtelContextBloat)
 			otlpGroup.GET("/traces/recent", api.GetRecentTraces)
+			otlpGroup.GET("/related-runs/:root_run_lineage_id", api.GetRelatedRuns)
 			otlpGroup.GET("/trace/:trace_id", api.GetTraceTree)
 			otlpGroup.GET("/logs/recent", api.GetRecentLogs)
 		}

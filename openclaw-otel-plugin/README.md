@@ -18,14 +18,14 @@ For a field-by-field specification, see [doc/OBSERVABILITY_DATA.md](./doc/OBSERV
 
 ### Traces
 
-- root run span: `command.process`
+- root turn span: `command.process`
 - LLM spans: `llm.completion: <model>`
 - tool spans: `tool.call: <tool>`
 - subagent spans: `subagent:<label>`
 
 ### Metrics
 
-- run metrics
+- turn metrics
 - LLM metrics
 - tool metrics
 - subagent metrics
@@ -141,7 +141,7 @@ Add:
   - OTLP export timeout
   - default: `5000`
 - `config.root_idle_timeout_ms`
-  - how long to keep a root run open after the last related event
+  - how long to keep a root turn open after the last related event
   - default: `60000`
 - `config.pricing`
   - custom cost table per 1M tokens

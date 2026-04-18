@@ -28,6 +28,9 @@ interface OverviewSummary {
 interface RecentRun {
   trace_id: string;
   session_id: string;
+  run_lineage_id: string;
+  parent_run_lineage_id: string;
+  root_run_lineage_id: string;
   name: string;
   user_message: string;
   status: string;
@@ -157,7 +160,7 @@ export function normalizeOverview(value: unknown): OtelOverview | null {
 
   return {
     summary,
-    recent_runs: Array.isArray(input.recent_runs) ? input.recent_runs : [],
+    recent_runs: Array.isArray((input as { recent_runs?: unknown }).recent_runs) ? (input as { recent_runs: RecentRun[] }).recent_runs : [],
     models: Array.isArray(input.models) ? input.models : [],
     tools: Array.isArray(input.tools) ? input.tools : [],
     subagents: Array.isArray(input.subagents) ? input.subagents : [],
@@ -217,7 +220,7 @@ function BreakdownTable({
         <h3 className="text-sm font-bold text-white/90">{title}</h3>
         <p className="mt-1 text-xs text-white/40">{subtitle}</p>
       </div>
-      <div className="overflow-x-auto">
+      <div className="scrollbar-thin overflow-x-auto">
         <table className="w-full text-left text-xs">
           <thead>
             <tr className="border-b border-white/10 text-white/40">
@@ -327,7 +330,7 @@ export function OtelMetricsDashboard() {
     const sections = [
       {
         title: 'Run Metrics',
-        patterns: ['openclaw.run.'],
+        patterns: ['openclaw.turn.'],
       },
       {
         title: 'LLM Metrics',
@@ -378,7 +381,7 @@ export function OtelMetricsDashboard() {
             <MetricCard
               label="Avg Run Duration"
               value={formatDurationMs(overview.summary.avg_run_duration_ms)}
-              hint="End-to-end root trace duration"
+              hint="End-to-end root run duration"
             />
             <MetricCard
               label="24h Tokens"
@@ -395,7 +398,7 @@ export function OtelMetricsDashboard() {
           <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
             <BreakdownTable
               title="Recent Runs"
-              subtitle="Latest root traces with business-level rollups."
+              subtitle="Latest root runs with business-level rollups."
               headers={['When', 'Status', 'Message / Session', 'Cost', 'Calls']}
               rows={overview.recent_runs.slice(0, 8).map((run) => [
                 new Date(run.created_at).toLocaleTimeString(),
@@ -489,7 +492,7 @@ export function OtelMetricsDashboard() {
             />
             <BreakdownTable
               title="Run Close Reasons"
-              subtitle="How root traces are being finalized."
+              subtitle="How root runs are being finalized."
               headers={['Reason', 'Count']}
               rows={health.close_reasons.map((item) => [item.name, formatNumber(item.count)])}
             />

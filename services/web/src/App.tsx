@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useWebSocket } from './hooks/useWebSocket';
 import type { WsMessage, TimelineEvent } from './types';
 import {
-  AreaChart, Area, BarChart, Bar, LineChart, Line,
+  Area, LineChart, Line,
   XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid
 } from 'recharts';
 
@@ -167,9 +167,9 @@ function Header({ connected, messages }: { connected: boolean; messages: WsMessa
 }
 
 /* ── Tab bar ── */
-const TABS = ['overview', 'tokens', 'sessions', 'cron', 'workspace', 'logs', 'cost', 'trace', 'metrics', 'security'] as const;
+const TABS = ['overview', 'sessions', 'cron', 'workspace', 'logs', 'cost', 'trace', 'metrics', 'security'] as const;
 const TAB_ICONS: Record<string, string> = {
-  overview: '◈', tokens: '⚡', sessions: '🧠', cron: '⏱', workspace: '📁', logs: '📋',
+  overview: '◈', sessions: '🧠', cron: '⏱', workspace: '📁', logs: '📋',
   cost: '💰', trace: '🔍', metrics: '📈', security: '🛡'
 };
 
@@ -364,116 +364,6 @@ function OverviewTab({ messages }: any) {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-/* ── Tokens ── */
-function TokensTab({ messages }: any) {
-  const chartData = useMemo(() => {
-    return messages
-      .filter((m: WsMessage) => (m.input_tokens || 0) > 0 || (m.output_tokens || 0) > 0)
-      .slice(0, 40)
-      .reverse()
-      .map((m: WsMessage) => ({
-        ts: m.timestamp ? fmtMs(new Date(m.timestamp).getTime()) : '',
-        input: m.input_tokens || 0,
-        output: m.output_tokens || 0,
-        total: (m.input_tokens || 0) + (m.output_tokens || 0),
-        cost: (m.cost_usd || 0) * 1000,
-      }));
-  }, [messages]);
-
-  const skillStats = useMemo(() => {
-    const stats: Record<string, { calls: number, cost: number, input: number, output: number }> = {};
-    messages.forEach((m: WsMessage) => {
-      if ((m.input_tokens || 0) > 0 || (m.output_tokens || 0) > 0) {
-        const skill = m.tool_name || '— (No Skill)';
-        if (!stats[skill]) stats[skill] = { calls: 0, cost: 0, input: 0, output: 0 };
-        stats[skill].calls += 1;
-        stats[skill].cost += (m.cost_usd || 0);
-        stats[skill].input += (m.input_tokens || 0);
-        stats[skill].output += (m.output_tokens || 0);
-      }
-    });
-    return Object.entries(stats)
-      .map(([name, s]) => ({ name, ...s }))
-      .sort((a, b) => b.cost - a.cost);
-  }, [messages]);
-
-  if (chartData.length === 0) return <EmptyState icon="⚡" title="No token data yet" subtitle="Token usage will appear here as sessions are tracked" />;
-
-  return (
-    <div className="space-y-5 animate-fade-up">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <div className="lg:col-span-2 space-y-5">
-          <div className="glass-card p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-medium" style={{ color: 'rgba(255,255,255,0.6)' }}>Token Volume</h3>
-              <div className="flex gap-3 text-xs">
-                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm" style={{ background: '#3b82f6', boxShadow: '0 0 4px #3b82f6' }} /><span style={{ color: 'rgba(255,255,255,0.35)' }}>Input</span></div>
-                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm" style={{ background: '#34d399', boxShadow: '0 0 4px #34d399' }} /><span style={{ color: 'rgba(255,255,255,0.35)' }}>Output</span></div>
-              </div>
-            </div>
-            <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={chartData} barCategoryGap="25%">
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-                <XAxis dataKey="ts" tick={{ fontSize: 9, fill: 'rgba(255,255,255,0.25)' }} />
-                <YAxis tick={{ fontSize: 9, fill: 'rgba(255,255,255,0.25)' }} />
-                <Tooltip contentStyle={{ background: '#0a0f1e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11, color: 'white' }} />
-                <Bar dataKey="input" fill="#3b82f6" stackId="a" radius={[3, 3, 0, 0]} isAnimationActive={false} />
-                <Bar dataKey="output" fill="#34d399" stackId="a" radius={[3, 3, 0, 0]} isAnimationActive={false} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-
-          <div className="glass-card p-5">
-            <h3 className="text-sm font-medium mb-4" style={{ color: 'rgba(255,255,255,0.6)' }}>
-              Cost Trend <span className="text-[10px] font-normal" style={{ color: 'rgba(255,255,255,0.2)' }}>(USD × 1000)</span>
-            </h3>
-            <ResponsiveContainer width="100%" height={110}>
-              <AreaChart data={chartData}>
-                <defs>
-                  <linearGradient id="costGrad2" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#fb923c" stopOpacity={0.35} />
-                    <stop offset="95%" stopColor="#fb923c" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-                <XAxis dataKey="ts" tick={{ fontSize: 9, fill: 'rgba(255,255,255,0.25)' }} />
-                <YAxis tick={{ fontSize: 9, fill: 'rgba(255,255,255,0.25)' }} />
-                <Tooltip contentStyle={{ background: '#0a0f1e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11, color: 'white' }} />
-                <Area type="monotone" dataKey="cost" stroke="#fb923c" fill="url(#costGrad2)" strokeWidth={2} strokeOpacity={0.9} isAnimationActive={false} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="glass-card p-4 sm:p-5 flex flex-col h-[280px] sm:h-[415px]">
-          <h3 className="text-sm font-medium mb-4 shrink-0" style={{ color: 'rgba(255,255,255,0.6)' }}>Cost Breakdown by Skill</h3>
-          <div className="flex-1 overflow-y-auto scrollbar-thin space-y-3 pr-2">
-            {skillStats.map((skill, i) => (
-              <div key={i} className="p-3 rounded-xl bg-white/[0.02] border border-white/5 transition-all hover:bg-white/[0.04]">
-                <div className="flex items-center justify-between mb-2 gap-2">
-                  <div className="text-[10px] sm:text-xs font-bold px-2 py-1 rounded-md truncate max-w-[150px] sm:max-w-[200px]" style={{ background: skill.name === '— (No Skill)' ? 'rgba(255,255,255,0.05)' : 'rgba(250,204,21,0.1)', color: skill.name === '— (No Skill)' ? 'rgba(255,255,255,0.5)' : '#facc15' }}>
-                    {skill.name}
-                  </div>
-                  <div className="text-xs sm:text-sm font-mono shrink-0" style={{ color: '#fb923c' }}>
-                    ${skill.cost.toFixed(6)}
-                  </div>
-                </div>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-0 text-[10px] font-mono" style={{ color: 'rgba(255,255,255,0.4)' }}>
-                  <span className="uppercase tracking-wider">{skill.calls} calls</span>
-                  <div className="flex gap-3">
-                    <span style={{ color: '#60a5fa' }}>in: {skill.input.toLocaleString()}</span>
-                    <span style={{ color: '#34d399' }}>out: {skill.output.toLocaleString()}</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
@@ -1667,7 +1557,6 @@ export default function App() {
 
         <div className={contentClasses}>
           {tab === 'overview' && <OverviewTab messages={messages} />}
-          {tab === 'tokens' && <TokensTab messages={messages} />}
           {tab === 'sessions' && <SessionsTab messages={messages} />}
           {tab === 'cron' && <CronTab messages={messages} />}
           {tab === 'workspace' && <WorkspaceTab messages={messages} />}

@@ -1,11 +1,16 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	collectortracev1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	commonv1 "go.opentelemetry.io/proto/otlp/common/v1"
+	resourcev1 "go.opentelemetry.io/proto/otlp/resource/v1"
+	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 
@@ -30,7 +35,7 @@ func seedOtelData(t *testing.T, db *gorm.DB) {
 			CostUsd:          1.2,
 			DurationNs:       int64(2 * time.Second),
 			StatusCode:       1,
-			Attributes:       datatypes.JSON([]byte(`{"session_id":"sess-1","user_message":"hi","run_status":"ok","root_close_reason":"agent_end","total_cost_usd":1.2,"total_tokens":120,"llm_call_count":1,"tool_call_count":1,"subagent_call_count":0,"last_model":"MiniMax-M2.7-highspeed","last_provider":"minimax-portal"}`)),
+			Attributes:       datatypes.JSON([]byte(`{"session_id":"sess-1","run_lineage_id":"run-root-1","root_run_lineage_id":"run-root-1","user_message":"hi","run_status":"ok","run_close_reason":"agent_end","total_cost_usd":1.2,"total_tokens":120,"run_llm_call_count":1,"run_tool_call_count":1,"run_subagent_call_count":1,"last_model":"MiniMax-M2.7-highspeed","last_provider":"minimax-portal"}`)),
 			CreatedAt:        now.Add(-10 * time.Minute),
 		},
 		{
@@ -46,7 +51,7 @@ func seedOtelData(t *testing.T, db *gorm.DB) {
 			CostUsd:          0.8,
 			DurationNs:       int64(1500 * time.Millisecond),
 			StatusCode:       2,
-			Attributes:       datatypes.JSON([]byte(`{"session_id":"sess-2","user_message":"oops","run_status":"error","root_close_reason":"idle_timeout","error_type":"tool","error":"failed","total_cost_usd":0.8,"total_tokens":80,"llm_call_count":1,"tool_call_count":1,"subagent_call_count":0,"last_model":"gpt-4o","last_provider":"openai"}`)),
+			Attributes:       datatypes.JSON([]byte(`{"session_id":"sess-2","run_lineage_id":"run-child-1","parent_run_lineage_id":"run-root-1","root_run_lineage_id":"run-root-1","user_message":"oops","run_status":"error","run_close_reason":"agent_end","error_type":"tool","error":"failed","total_cost_usd":0.8,"total_tokens":80,"run_llm_call_count":1,"run_tool_call_count":1,"run_subagent_call_count":0,"last_model":"gpt-4o","last_provider":"openai"}`)),
 			CreatedAt:        now.Add(-5 * time.Minute),
 		},
 		{
@@ -123,6 +128,25 @@ func seedOtelData(t *testing.T, db *gorm.DB) {
 	}
 	if err := db.Create(&logs).Error; err != nil {
 		t.Fatalf("seed logs: %v", err)
+	}
+}
+
+func waitForOtelSpanRows(t *testing.T, db *gorm.DB, want int64) {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		var count int64
+		if err := db.Model(&models.OtelSpan{}).Count(&count).Error; err != nil {
+			t.Fatalf("count otel spans: %v", err)
+		}
+		if count == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected %d otel spans, got %d", want, count)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -244,7 +268,285 @@ func TestGetTraceTreeAndRecentTraces(t *testing.T) {
 		var recent []map[string]any
 		decodeJSONBody(t, recentRec, &recent)
 		if len(recent) != 2 {
-			t.Fatalf("expected two recent root traces, got %+v", recent)
+			t.Fatalf("expected two recent root runs, got %+v", recent)
+		}
+
+		relatedRunsRec := performGET(t, GetRelatedRuns, "/related-runs/run-root-1", gin.Params{{Key: "root_run_lineage_id", Value: "run-root-1"}})
+		if relatedRunsRec.Code != http.StatusOK {
+			t.Fatalf("related runs expected 200, got %d body=%s", relatedRunsRec.Code, relatedRunsRec.Body.String())
+		}
+		var relatedRuns []map[string]any
+		decodeJSONBody(t, relatedRunsRec, &relatedRuns)
+		if len(relatedRuns) != 2 {
+			t.Fatalf("expected two related runs, got %+v", relatedRuns)
+		}
+	})
+}
+
+func TestRelatedRunsRealChainE2E(t *testing.T) {
+	const (
+		mainSession       = "agent:main:feishu:direct:parent"
+		childSession      = "agent:main:subagent:child-run-1"
+		rootRunLineageID  = "run-main-1"
+		childRunLineageID = "run-child-1"
+		mainTraceHex      = "101112131415161718191a1b1c1d1e1f"
+		childTraceHex     = "202122232425262728292a2b2c2d2e2f"
+	)
+
+	withInMemoryDB(t, func(db *gorm.DB) {
+		withSpanQueue(t, 8, func(ch chan *models.OtelSpan) {
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan struct{})
+			go func() {
+				processQueue(ctx, ch, 8)
+				close(done)
+			}()
+			defer func() {
+				cancel()
+				<-done
+			}()
+
+			kvStr := func(key, value string) *commonv1.KeyValue {
+				return &commonv1.KeyValue{
+					Key: key,
+					Value: &commonv1.AnyValue{
+						Value: &commonv1.AnyValue_StringValue{StringValue: value},
+					},
+				}
+			}
+			kvInt := func(key string, value int64) *commonv1.KeyValue {
+				return &commonv1.KeyValue{
+					Key: key,
+					Value: &commonv1.AnyValue{
+						Value: &commonv1.AnyValue_IntValue{IntValue: value},
+					},
+				}
+			}
+			kvDouble := func(key string, value float64) *commonv1.KeyValue {
+				return &commonv1.KeyValue{
+					Key: key,
+					Value: &commonv1.AnyValue{
+						Value: &commonv1.AnyValue_DoubleValue{DoubleValue: value},
+					},
+				}
+			}
+
+			start := uint64(time.Now().Add(-2 * time.Minute).UnixNano())
+			mainTraceID := []byte{0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f}
+			childTraceID := []byte{0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f}
+			mainRootSpanID := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
+			sessionsSpawnSpanID := []byte{0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18}
+			subagentSpanID := []byte{0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28}
+			childRootSpanID := []byte{0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38}
+			announceSpanID := []byte{0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48}
+
+			req := &collectortracev1.ExportTraceServiceRequest{
+				ResourceSpans: []*tracev1.ResourceSpans{
+					{
+						Resource: &resourcev1.Resource{
+							Attributes: []*commonv1.KeyValue{
+								kvStr("service.name", "openclaw"),
+							},
+						},
+						ScopeSpans: []*tracev1.ScopeSpans{
+							{
+								Spans: []*tracev1.Span{
+									{
+										TraceId:           mainTraceID,
+										SpanId:            mainRootSpanID,
+										Name:              "command.process",
+										StartTimeUnixNano: start,
+										EndTimeUnixNano:   start + uint64(8*time.Second),
+										Status:            &tracev1.Status{Code: tracev1.Status_STATUS_CODE_OK},
+										Attributes: []*commonv1.KeyValue{
+											kvStr("session_id", mainSession),
+											kvStr("run_lineage_id", rootRunLineageID),
+											kvStr("root_run_lineage_id", rootRunLineageID),
+											kvStr("run_status", "ok"),
+											kvStr("run_close_reason", "agent_end"),
+											kvStr("user_message", "ship a rollout plan"),
+											kvStr("last_model", "MiniMax-M2.7-highspeed"),
+											kvStr("last_provider", "minimax-portal"),
+											kvInt("run_tool_call_count", 1),
+											kvInt("run_subagent_call_count", 1),
+											kvInt("total_tokens", 120),
+											kvDouble("total_cost_usd", 1.2),
+										},
+									},
+									{
+										TraceId:           mainTraceID,
+										SpanId:            sessionsSpawnSpanID,
+										ParentSpanId:      mainRootSpanID,
+										Name:              "tool.call: sessions_spawn",
+										StartTimeUnixNano: start + uint64(1*time.Second),
+										EndTimeUnixNano:   start + uint64(2*time.Second),
+										Status:            &tracev1.Status{Code: tracev1.Status_STATUS_CODE_OK},
+										Attributes: []*commonv1.KeyValue{
+											kvStr("session_id", mainSession),
+											kvStr("tool_name", "sessions_spawn"),
+											kvStr("tool_call_id", "call_spawn_1"),
+										},
+									},
+									{
+										TraceId:           mainTraceID,
+										SpanId:            subagentSpanID,
+										ParentSpanId:      mainRootSpanID,
+										Name:              "subagent:researcher",
+										StartTimeUnixNano: start + uint64(2*time.Second),
+										EndTimeUnixNano:   start + uint64(7*time.Second),
+										Status:            &tracev1.Status{Code: tracev1.Status_STATUS_CODE_OK},
+										Attributes: []*commonv1.KeyValue{
+											kvStr("session_id", mainSession),
+											kvStr("subagent.parent_run_lineage_id", rootRunLineageID),
+											kvStr("subagent.root_run_lineage_id", rootRunLineageID),
+											kvStr("subagent.child_session_key", childSession),
+											kvStr("subagent.label", "researcher"),
+											kvStr("subagent.mode", "run"),
+											kvStr("subagent.fallback_source", "sessions_spawn"),
+										},
+									},
+								},
+							},
+						},
+					},
+					{
+						Resource: &resourcev1.Resource{
+							Attributes: []*commonv1.KeyValue{
+								kvStr("service.name", "openclaw"),
+							},
+						},
+						ScopeSpans: []*tracev1.ScopeSpans{
+							{
+								Spans: []*tracev1.Span{
+									{
+										TraceId:           childTraceID,
+										SpanId:            childRootSpanID,
+										Name:              "command.process",
+										StartTimeUnixNano: start + uint64(3*time.Second),
+										EndTimeUnixNano:   start + uint64(6*time.Second),
+										Status:            &tracev1.Status{Code: tracev1.Status_STATUS_CODE_OK},
+										Attributes: []*commonv1.KeyValue{
+											kvStr("session_id", childSession),
+											kvStr("run_lineage_id", childRunLineageID),
+											kvStr("parent_run_lineage_id", rootRunLineageID),
+											kvStr("root_run_lineage_id", rootRunLineageID),
+											kvStr("run_status", "ok"),
+											kvStr("run_close_reason", "agent_end"),
+											kvStr("last_model", "MiniMax-M2.7-highspeed"),
+											kvStr("last_provider", "minimax-portal"),
+											kvInt("run_llm_call_count", 1),
+											kvInt("total_tokens", 80),
+											kvDouble("total_cost_usd", 0.8),
+										},
+									},
+									{
+										TraceId:           childTraceID,
+										SpanId:            announceSpanID,
+										ParentSpanId:      childRootSpanID,
+										Name:              "announce",
+										StartTimeUnixNano: start + uint64(4*time.Second),
+										EndTimeUnixNano:   start + uint64(5*time.Second),
+										Status:            &tracev1.Status{Code: tracev1.Status_STATUS_CODE_OK},
+										Attributes: []*commonv1.KeyValue{
+											kvStr("session_id", childSession),
+											kvStr("event_name", "run.started"),
+											kvStr("message", "researcher joined the run"),
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+
+			rec := performJSONHandler(t, ReceiveOtelTraces, jsonBody(t, req))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("ingest traces expected 200, got %d body=%s", rec.Code, rec.Body.String())
+			}
+
+			waitForOtelSpanRows(t, db, 5)
+		})
+
+		recentRec := performGET(t, GetRecentTraces, "/recent-traces", nil)
+		if recentRec.Code != http.StatusOK {
+			t.Fatalf("recent traces expected 200, got %d body=%s", recentRec.Code, recentRec.Body.String())
+		}
+		var recent []map[string]any
+		decodeJSONBody(t, recentRec, &recent)
+		if len(recent) != 2 {
+			t.Fatalf("expected 2 root traces from real chain, got %+v", recent)
+		}
+
+		recentBySession := make(map[string]map[string]any, len(recent))
+		for _, span := range recent {
+			attrs := span["Attributes"].(map[string]any)
+			recentBySession[attrs["session_id"].(string)] = attrs
+		}
+		if recentBySession[mainSession]["run_lineage_id"] != rootRunLineageID {
+			t.Fatalf("main root trace lost run_lineage_id: %+v", recentBySession[mainSession])
+		}
+		if recentBySession[childSession]["parent_run_lineage_id"] != rootRunLineageID {
+			t.Fatalf("child root trace lost parent_run_lineage_id: %+v", recentBySession[childSession])
+		}
+		if recentBySession[childSession]["root_run_lineage_id"] != rootRunLineageID {
+			t.Fatalf("child root trace lost root_run_lineage_id: %+v", recentBySession[childSession])
+		}
+
+		parentTreeRec := performGET(t, GetTraceTree, "/trace/main", gin.Params{{Key: "trace_id", Value: mainTraceHex}})
+		if parentTreeRec.Code != http.StatusOK {
+			t.Fatalf("parent trace tree expected 200, got %d body=%s", parentTreeRec.Code, parentTreeRec.Body.String())
+		}
+		var parentTree []map[string]any
+		decodeJSONBody(t, parentTreeRec, &parentTree)
+		if len(parentTree) != 1 {
+			t.Fatalf("expected one parent root node, got %+v", parentTree)
+		}
+		parentChildren := parentTree[0]["children"].([]any)
+		if len(parentChildren) != 2 {
+			t.Fatalf("expected sessions_spawn and subagent children, got %+v", parentChildren)
+		}
+
+		childTreeRec := performGET(t, GetTraceTree, "/trace/child", gin.Params{{Key: "trace_id", Value: childTraceHex}})
+		if childTreeRec.Code != http.StatusOK {
+			t.Fatalf("child trace tree expected 200, got %d body=%s", childTreeRec.Code, childTreeRec.Body.String())
+		}
+		var childTree []map[string]any
+		decodeJSONBody(t, childTreeRec, &childTree)
+		if len(childTree) != 1 {
+			t.Fatalf("expected one child root node, got %+v", childTree)
+		}
+		childChildren := childTree[0]["children"].([]any)
+		if len(childChildren) != 1 {
+			t.Fatalf("expected announce leaf span under child turn, got %+v", childChildren)
+		}
+		if childChildren[0].(map[string]any)["Name"] != "announce" {
+			t.Fatalf("expected announce leaf span, got %+v", childChildren[0])
+		}
+
+		relatedRunsRec := performGET(t, GetRelatedRuns, "/related-runs/"+rootRunLineageID, gin.Params{{Key: "root_run_lineage_id", Value: rootRunLineageID}})
+		if relatedRunsRec.Code != http.StatusOK {
+			t.Fatalf("related runs expected 200, got %d body=%s", relatedRunsRec.Code, relatedRunsRec.Body.String())
+		}
+		var relatedRuns []map[string]any
+		decodeJSONBody(t, relatedRunsRec, &relatedRuns)
+		if len(relatedRuns) != 2 {
+			t.Fatalf("expected parent and child related runs, got %+v", relatedRuns)
+		}
+
+		relatedRunsBySession := make(map[string]map[string]any, len(relatedRuns))
+		for _, span := range relatedRuns {
+			attrs := span["Attributes"].(map[string]any)
+			relatedRunsBySession[attrs["session_id"].(string)] = attrs
+		}
+		if relatedRunsBySession[mainSession]["run_lineage_id"] != rootRunLineageID {
+			t.Fatalf("related runs missing main run lineage root id: %+v", relatedRunsBySession[mainSession])
+		}
+		if relatedRunsBySession[childSession]["run_lineage_id"] != childRunLineageID {
+			t.Fatalf("related runs missing child run lineage id: %+v", relatedRunsBySession[childSession])
+		}
+		if relatedRunsBySession[childSession]["parent_run_lineage_id"] != rootRunLineageID {
+			t.Fatalf("related runs missing child lineage parent id: %+v", relatedRunsBySession[childSession])
 		}
 	})
 }
