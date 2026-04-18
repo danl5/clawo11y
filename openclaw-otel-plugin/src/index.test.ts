@@ -36,6 +36,28 @@ const otelApiState = vi.hoisted(() => {
   return { spans, startSpan, setSpan, active, withFn, reset };
 });
 
+const metricState = vi.hoisted(() => {
+  const counters = new Map<string, { add: ReturnType<typeof vi.fn> }>();
+  const histograms = new Map<string, { record: ReturnType<typeof vi.fn> }>();
+
+  const getCounter = (name: string) => {
+    if (!counters.has(name)) counters.set(name, { add: vi.fn() });
+    return counters.get(name)!;
+  };
+
+  const getHistogram = (name: string) => {
+    if (!histograms.has(name)) histograms.set(name, { record: vi.fn() });
+    return histograms.get(name)!;
+  };
+
+  const reset = () => {
+    counters.clear();
+    histograms.clear();
+  };
+
+  return { counters, histograms, getCounter, getHistogram, reset };
+});
+
 // Mock OpenTelemetry to prevent real network requests during testing
 vi.mock('@opentelemetry/sdk-trace-node', () => ({
   NodeTracerProvider: class {
@@ -61,9 +83,9 @@ vi.mock('@opentelemetry/sdk-metrics', () => ({
   MeterProvider: class {
     getMeter() {
       return {
-        createCounter: () => ({ add: vi.fn() }),
-        createHistogram: () => ({ record: vi.fn() }),
-        createUpDownCounter: () => ({ add: vi.fn() }),
+        createCounter: (name: string) => metricState.getCounter(name),
+        createHistogram: (name: string) => metricState.getHistogram(name),
+        createUpDownCounter: (name: string) => metricState.getCounter(name),
       };
     }
     async forceFlush() {}
@@ -118,6 +140,8 @@ describe('OpenClaw OTEL Plugin Flow', () => {
 
   beforeEach(() => {
     otelApiState.reset();
+    metricState.reset();
+    vi.useRealTimers();
     hooks = {};
     events = {};
 
@@ -201,6 +225,94 @@ describe('OpenClaw OTEL Plugin Flow', () => {
     expect(mockApi.logger.error).not.toHaveBeenCalled();
   });
 
+  it('prefers llm_output lastAssistant.usage for token and cost accounting', async () => {
+    registerPlugin(mockApi);
+    const sessionId = 'agent:main:demo:last-assistant-usage';
+
+    await hooks['inbound_claim']({ sessionKey: sessionId, agentName: 'demo-agent' });
+
+    events['llm_input']({
+      sessionId,
+      model: 'MiniMax-M2.7-highspeed',
+      provider: 'minimax-portal',
+      systemPrompt: 'You are a helpful assistant',
+    });
+
+    events['llm_output']({
+      sessionId,
+      model: 'MiniMax-M2.7-highspeed',
+      provider: 'minimax-portal',
+      lastAssistant: {
+        usage: {
+          input: 24248,
+          output: 98,
+          cacheRead: 12397,
+          cacheWrite: 0,
+          totalTokens: 36743,
+          cost: {
+            input: 0.0145488,
+            output: 0.0002352,
+            cacheRead: 0.00074382,
+            cacheWrite: 0,
+            total: 0.01552782,
+          },
+        },
+      },
+    });
+
+    const llmSpanEntry = otelApiState.spans.find((entry) => entry.name === 'llm.completion: MiniMax-M2.7-highspeed');
+    expect(llmSpanEntry).toBeTruthy();
+
+    const llmSpan = llmSpanEntry!.span;
+    expect(llmSpan.setAttribute).toHaveBeenCalledWith('prompt_tokens', 24248);
+    expect(llmSpan.setAttribute).toHaveBeenCalledWith('completion_tokens', 98);
+    expect(llmSpan.setAttribute).toHaveBeenCalledWith('cache_read_tokens', 12397);
+    expect(llmSpan.setAttribute).toHaveBeenCalledWith('cache_write_tokens', 0);
+    expect(llmSpan.setAttribute).toHaveBeenCalledWith('total_tokens', 36743);
+    expect(llmSpan.setAttribute).toHaveBeenCalledWith('cost_usd', 0.01552782);
+    expect(llmSpan.setAttribute).toHaveBeenCalledWith('usage_source', 'lastAssistant.usage');
+  });
+
+  it('keeps token metric labels when llm_output omits model and provider', async () => {
+    registerPlugin(mockApi);
+    const sessionId = 'agent:main:demo:metric-label-fallback';
+
+    await hooks['inbound_claim']({ sessionKey: sessionId, agentName: 'demo-agent' });
+
+    events['llm_input']({
+      sessionId,
+      model: 'MiniMax-M2.7-highspeed',
+      provider: 'minimax-portal',
+    });
+
+    events['llm_output']({
+      sessionId,
+      lastAssistant: {
+        usage: {
+          input: 10,
+          output: 5,
+          totalTokens: 15,
+          cost: {
+            total: 0.01,
+          },
+        },
+      },
+    });
+
+    expect(metricState.counters.get('openclaw.llm.tokens.total')?.add).toHaveBeenCalledWith(15, {
+      model: 'MiniMax-M2.7-highspeed',
+      provider: 'minimax-portal',
+    });
+    expect(metricState.counters.get('openclaw.llm.cost.usd')?.add).toHaveBeenCalledWith(0.01, {
+      model: 'MiniMax-M2.7-highspeed',
+      provider: 'minimax-portal',
+    });
+
+    const rootSpan = otelApiState.spans.find((entry) => entry.name === 'command.process')?.span;
+    expect(rootSpan?.setAttribute).toHaveBeenCalledWith('last_model', 'MiniMax-M2.7-highspeed');
+    expect(rootSpan?.setAttribute).toHaveBeenCalledWith('last_provider', 'minimax-portal');
+  });
+
   it('uses resolved sessionId during inbound_claim and closes on agent_end', async () => {
     registerPlugin(mockApi);
     const sessionId = 'agent:main:demo:123';
@@ -210,10 +322,14 @@ describe('OpenClaw OTEL Plugin Flow', () => {
     expect(otelApiState.spans).toHaveLength(1);
     expect(otelApiState.spans[0].name).toBe('command.process');
     expect(otelApiState.spans[0].span.setAttribute).toHaveBeenCalledWith('session_id', sessionId);
+    expect(otelApiState.spans[0].span.setAttribute).toHaveBeenCalledWith('run_trigger', 'inbound_claim');
+    expect(otelApiState.spans[0].span.setAttribute).toHaveBeenCalledWith('root_run_lineage_id', expect.any(String));
+    expect(otelApiState.spans[0].span.setAttribute).toHaveBeenCalledWith('run_lineage_id', expect.any(String));
 
     events['agent_end']({ sessionId });
 
-    expect(otelApiState.spans[0].span.setAttribute).toHaveBeenCalledWith('root_close_reason', 'agent_end');
+    expect(otelApiState.spans[0].span.setAttribute).toHaveBeenCalledWith('run_close_reason', 'agent_end');
+    expect(otelApiState.spans[0].span.setAttribute).toHaveBeenCalledWith('run_close_reason', 'agent_end');
     expect(otelApiState.spans[0].span.end).toHaveBeenCalled();
   });
 
@@ -242,7 +358,7 @@ describe('OpenClaw OTEL Plugin Flow', () => {
     const rootSpans = otelApiState.spans.filter((entry) => entry.name === 'command.process');
     expect(rootSpans).toHaveLength(1);
     expect(rootSpans[0].span.setAttribute).toHaveBeenCalledWith('session_id', sessionKey);
-    expect(rootSpans[0].span.setAttribute).toHaveBeenCalledWith('root_close_reason', 'agent_end');
+    expect(rootSpans[0].span.setAttribute).toHaveBeenCalledWith('run_close_reason', 'agent_end');
     expect(rootSpans[0].span.end).toHaveBeenCalled();
   });
 
@@ -348,6 +464,7 @@ describe('OpenClaw OTEL Plugin Flow', () => {
     expect(childRoot.parentCtx).toMatchObject({ __span: subagentSpan.span });
     expect(childLlm.parentCtx).toMatchObject({ __span: childRoot.span });
 
+    expect(childRoot.span.setAttribute).toHaveBeenCalledWith('parent_run_lineage_id', expect.any(String));
     expect(childRoot.span.setAttribute).toHaveBeenCalledWith('subagent.parent_session_key', parentSessionId);
     expect(childRoot.span.setAttribute).toHaveBeenCalledWith('subagent.inherited_trace', true);
   });
@@ -395,6 +512,8 @@ describe('OpenClaw OTEL Plugin Flow', () => {
     const fallbackSubagent = otelApiState.spans[2];
     const childRoot = otelApiState.spans[3];
     const childLlm = otelApiState.spans[4];
+    const parentRunLineageIdCall = parentRoot.span.setAttribute.mock.calls.find(([key]: [string]) => key === 'run_lineage_id');
+    const parentRootRunLineageIdCall = parentRoot.span.setAttribute.mock.calls.find(([key]: [string]) => key === 'root_run_lineage_id');
 
     expect(parentRoot.name).toBe('command.process');
     expect(sessionsSpawnTool.name).toBe('tool.call: sessions_spawn');
@@ -404,7 +523,191 @@ describe('OpenClaw OTEL Plugin Flow', () => {
 
     expect(childRoot.parentCtx).toMatchObject({ __span: fallbackSubagent.span });
     expect(fallbackSubagent.span.end).toHaveBeenCalled();
+    expect(parentRunLineageIdCall?.[1]).toBeTruthy();
+    expect(parentRootRunLineageIdCall?.[1]).toBeTruthy();
+    expect(childRoot.span.setAttribute).toHaveBeenCalledWith('parent_run_lineage_id', parentRunLineageIdCall?.[1]);
+    expect(childRoot.span.setAttribute).toHaveBeenCalledWith('root_run_lineage_id', parentRootRunLineageIdCall?.[1]);
+    expect(childRoot.span.setAttribute).toHaveBeenCalledWith('run_relation_source', 'sessions_spawn_fallback');
     expect(childRoot.span.setAttribute).toHaveBeenCalledWith('subagent.parent_session_key', parentSessionId);
     expect(childRoot.span.setAttribute).toHaveBeenCalledWith('subagent.inherited_trace', true);
+  });
+
+  it('parses sessions_spawn result payloads wrapped in content text and details', async () => {
+    registerPlugin(mockApi);
+    const parentSessionId = 'agent:main:feishu:direct:parent';
+    const childRunId = 'eec9c3eb-7648-44c1-992d-efe76218cb0a';
+    const childSessionId = 'agent:main:subagent:d3d34e3b-c7a1-4f6b-892c-66deeffd3879';
+
+    await hooks['inbound_claim']({ sessionKey: parentSessionId, agentName: 'main-agent' });
+
+    events['before_tool_call']({
+      sessionKey: parentSessionId,
+      toolCallId: 'call_spawn_wrapped',
+      toolName: 'sessions_spawn',
+      params: {
+        task: 'weather',
+        runtime: 'subagent',
+        mode: 'run',
+      },
+    });
+
+    events['subagent_spawned']({
+      childSessionKey: childSessionId,
+      runId: childRunId,
+    });
+
+    events['after_tool_call']({
+      sessionKey: parentSessionId,
+      toolCallId: 'call_spawn_wrapped',
+      toolName: 'sessions_spawn',
+      result: {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              status: 'accepted',
+              childSessionKey: childSessionId,
+              runId: childRunId,
+              mode: 'run',
+            }),
+          },
+        ],
+        details: {
+          status: 'accepted',
+          childSessionKey: childSessionId,
+          runId: childRunId,
+          mode: 'run',
+        },
+      },
+    });
+
+    events['agent_end']({ sessionId: parentSessionId });
+
+    await hooks['inbound_claim']({ sessionId: childSessionId, agentName: 'researcher' });
+
+    events['llm_input']({
+      sessionId: childSessionId,
+      model: 'MiniMax-M2.7-highspeed',
+      provider: 'minimax-portal',
+    });
+
+    const parentRoot = otelApiState.spans[0];
+    const fallbackSubagent = otelApiState.spans.find((entry) => entry.name === 'subagent:subagent');
+    const childRoot = [...otelApiState.spans].reverse().find((entry) => entry.name === 'command.process');
+    const parentRunLineageIdCall = parentRoot.span.setAttribute.mock.calls.find(([key]: [string]) => key === 'run_lineage_id');
+    const parentRootRunLineageIdCall = parentRoot.span.setAttribute.mock.calls.find(([key]: [string]) => key === 'root_run_lineage_id');
+
+    expect(fallbackSubagent).toBeTruthy();
+    expect(childRoot?.parentCtx).toMatchObject({ __span: fallbackSubagent?.span });
+    expect(parentRunLineageIdCall?.[1]).toBeTruthy();
+    expect(parentRootRunLineageIdCall?.[1]).toBeTruthy();
+    expect(childRoot?.span.setAttribute).toHaveBeenCalledWith('parent_run_lineage_id', parentRunLineageIdCall?.[1]);
+    expect(childRoot?.span.setAttribute).toHaveBeenCalledWith('root_run_lineage_id', parentRootRunLineageIdCall?.[1]);
+    expect(childRoot?.span.setAttribute).toHaveBeenCalledWith('run_relation_source', 'sessions_spawn_fallback');
+  });
+
+  it('keeps related runs linked when the parent session resumes after multiple subagents finish', async () => {
+    registerPlugin(mockApi);
+    const parentSessionId = 'agent:main:feishu:direct:parent';
+    const child1SessionId = 'agent:main:subagent:child-1';
+    const child2SessionId = 'agent:main:subagent:child-2';
+
+    await hooks['inbound_claim']({ sessionKey: parentSessionId, agentName: 'main-agent' });
+
+    events['subagent_spawning']({
+      requesterSessionKey: parentSessionId,
+      childSessionKey: child1SessionId,
+      runId: 'child-run-1',
+      agentId: 'researcher-a',
+      label: 'researcher-a',
+      mode: 'run',
+    });
+
+    events['subagent_spawning']({
+      requesterSessionKey: parentSessionId,
+      childSessionKey: child2SessionId,
+      runId: 'child-run-2',
+      agentId: 'researcher-b',
+      label: 'researcher-b',
+      mode: 'run',
+    });
+
+    const originalRoot = otelApiState.spans[0];
+    const originalRunLineageId = originalRoot.span.setAttribute.mock.calls.find(([key]: [string]) => key === 'run_lineage_id')?.[1];
+    const originalRootRunLineageId = originalRoot.span.setAttribute.mock.calls.find(([key]: [string]) => key === 'root_run_lineage_id')?.[1];
+
+    events['agent_end']({ sessionId: parentSessionId });
+
+    events['subagent_ended']({
+      childSessionKey: child1SessionId,
+      runId: 'child-run-1',
+      result: 'child one done',
+      mode: 'run',
+    });
+
+    events['subagent_ended']({
+      childSessionKey: child2SessionId,
+      runId: 'child-run-2',
+      result: 'child two done',
+      mode: 'run',
+    });
+
+    events['llm_input']({
+      sessionId: parentSessionId,
+      model: 'MiniMax-M2.7-highspeed',
+      provider: 'minimax-portal',
+    });
+
+    const parentRoots = otelApiState.spans.filter((entry) => entry.name === 'command.process');
+    expect(parentRoots).toHaveLength(2);
+
+    const resumedRoot = parentRoots[1];
+    expect(originalRunLineageId).toBeTruthy();
+    expect(originalRootRunLineageId).toBeTruthy();
+    expect(resumedRoot.span.setAttribute).toHaveBeenCalledWith('root_run_lineage_id', originalRootRunLineageId);
+    expect(resumedRoot.span.setAttribute).toHaveBeenCalledWith('parent_run_lineage_id', originalRunLineageId);
+    expect(resumedRoot.span.setAttribute).toHaveBeenCalledWith('run_relation_source', 'session_continuation');
+  });
+
+  it('does not leave orphan session stats that later emit idle timeout closes', async () => {
+    vi.useFakeTimers();
+    registerPlugin(mockApi);
+    const parentSessionId = 'agent:main:feishu:direct:parent';
+    const childSessionId = 'agent:main:subagent:child-1';
+
+    await hooks['inbound_claim']({ sessionKey: parentSessionId, agentName: 'main-agent' });
+
+    events['before_tool_call']({
+      sessionKey: parentSessionId,
+      toolCallId: 'call_spawn_idle',
+      toolName: 'sessions_spawn',
+      params: { mode: 'run' },
+    });
+
+    events['after_tool_call']({
+      sessionKey: parentSessionId,
+      toolCallId: 'call_spawn_idle',
+      toolName: 'sessions_spawn',
+      result: {
+        details: {
+          status: 'accepted',
+          childSessionKey: childSessionId,
+          runId: 'child-run-idle',
+          mode: 'run',
+        },
+      },
+    });
+
+    events['agent_end']({ sessionId: parentSessionId });
+    events['subagent_ended']({
+      childSessionKey: childSessionId,
+      runId: 'child-run-idle',
+      result: 'done',
+      mode: 'run',
+    });
+
+    vi.advanceTimersByTime(1500);
+
+    expect(mockApi.logger.error).not.toHaveBeenCalledWith(expect.stringContaining('run.close_without_root'));
   });
 });

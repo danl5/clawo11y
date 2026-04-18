@@ -15,13 +15,13 @@ Represents a full run or session lifecycle.
 Common attributes include:
 
 - `session_id`
-- `command_trigger`
+- `run_trigger`
 - `channel`
 - `agent_name`
 - `user_message`
 - `user_message_len`
 - `run_status`
-- `root_close_reason`
+- `run_close_reason`
 - `duration_ms`
 - `llm_call_count`
 - `tool_call_count`

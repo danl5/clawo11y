@@ -9,6 +9,7 @@ import { LoggerProvider, BatchLogRecordProcessor } from "@opentelemetry/sdk-logs
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
 import { Resource } from "@opentelemetry/resources";
 import { SemanticResourceAttributes } from "@opentelemetry/semantic-conventions";
+import { randomUUID } from "node:crypto";
 
 interface OpenClawPluginApi {
   registerHook(name: string, callback: (ctx: any) => Promise<any> | any): void;
@@ -18,6 +19,11 @@ interface OpenClawPluginApi {
 }
 
 interface SessionRunStats {
+  runLineageId: string;
+  rootRunLineageId: string;
+  parentRunLineageId?: string;
+  runRelationSource?: string;
+  runTrigger?: string;
   startedAtMs: number;
   lastActivityMs: number;
   llmCalls: number;
@@ -36,6 +42,13 @@ interface SessionRunStats {
   highRiskToolCalls: number;
 }
 
+interface ClosedSessionLineage {
+  runLineageId: string;
+  rootRunLineageId: string;
+  closedAtMs: number;
+  hadActiveSubagentsOnClose?: boolean;
+}
+
 const activeSpans = new Map<string, Span>();
 const activeTimers = new Map<string, number>();
 const activeSessionPrimaryKeys = new Map<string, string>();
@@ -45,11 +58,18 @@ const activeSubagentParents = new Map<string, string>();
 const activeSubagentPrimaryKeys = new Map<string, string>();
 const activeSubagentAliasGroups = new Map<string, Set<string>>();
 const activeSubagentSources = new Map<string, "hook" | "sessions_spawn_fallback">();
-const activeSubagentMetadata = new Map<string, { label?: string; agentId?: string; mode?: string }>();
+const activeSubagentMetadata = new Map<string, {
+  label?: string;
+  agentId?: string;
+  mode?: string;
+  parentRunLineageId?: string;
+  rootRunLineageId?: string;
+}>();
 const pendingSessionAttributes = new Map<string, Record<string, string | number | boolean>>();
 const pendingSessionsSpawnFallbacks = new Map<string, { label?: string; agentId?: string; mode?: string }>();
 const rootIdleTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const sessionRunStats = new Map<string, SessionRunStats>();
+const closedSessionLineage = new Map<string, ClosedSessionLineage>();
 
 // Default pricing per 1 million tokens if not configured.
 // The config also accepts input/output aliases for providers that document prices that way.
@@ -92,6 +112,87 @@ function calculateCost(model: string | undefined, promptTokens: number, completi
   }
 
   return (promptTokens * pRate) + (completionTokens * cRate);
+}
+
+function extractLlmUsage(event: any, customPricing: any) {
+  const usage = event?.lastAssistant?.usage || event?.usage;
+  if (!usage || typeof usage !== "object") return null;
+
+  // OpenClaw native shape: lastAssistant.usage.{input, output, cacheRead, cacheWrite, totalTokens, cost.total}
+  if (
+    usage.input !== undefined ||
+    usage.output !== undefined ||
+    usage.cacheRead !== undefined ||
+    usage.cacheWrite !== undefined ||
+    usage.totalTokens !== undefined ||
+    usage.cost !== undefined
+  ) {
+    const promptTokens = Number(usage.input || 0);
+    const completionTokens = Number(usage.output || 0);
+    const cacheReadTokens = Number(usage.cacheRead || 0);
+    const cacheWriteTokens = Number(usage.cacheWrite || 0);
+    const totalTokens = Number(usage.totalTokens || (promptTokens + completionTokens + cacheReadTokens + cacheWriteTokens));
+    const costUsd =
+      typeof usage.cost === "object" && usage.cost !== null && usage.cost.total !== undefined
+        ? Number(usage.cost.total || 0)
+        : calculateCost(event?.model, promptTokens, completionTokens, customPricing);
+
+    return {
+      promptTokens,
+      completionTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      totalTokens,
+      costUsd,
+      costInputUsd: Number(usage.cost?.input || 0),
+      costOutputUsd: Number(usage.cost?.output || 0),
+      costCacheReadUsd: Number(usage.cost?.cacheRead || 0),
+      costCacheWriteUsd: Number(usage.cost?.cacheWrite || 0),
+      source: event?.lastAssistant?.usage ? "lastAssistant.usage" : "event.usage",
+    };
+  }
+
+  // Legacy compatibility: usage.{prompt_tokens, completion_tokens}
+  const promptTokens = Number(usage.prompt_tokens || 0);
+  const completionTokens = Number(usage.completion_tokens || 0);
+  const totalTokens = Number(usage.total_tokens || (promptTokens + completionTokens));
+  const costUsd =
+    usage.cost_usd !== undefined
+      ? Number(usage.cost_usd || 0)
+      : calculateCost(event?.model, promptTokens, completionTokens, customPricing);
+
+  return {
+    promptTokens,
+    completionTokens,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens,
+    costUsd,
+    costInputUsd: 0,
+    costOutputUsd: 0,
+    costCacheReadUsd: 0,
+    costCacheWriteUsd: 0,
+    source: "legacy_usage",
+  };
+}
+
+function extractAssistantPreview(event: any): string | undefined {
+  const assistantTexts = Array.isArray(event?.assistantTexts)
+    ? event.assistantTexts.filter((value: unknown) => typeof value === "string" && value.trim().length > 0)
+    : [];
+  if (assistantTexts.length > 0) {
+    return sanitizePayload(String(assistantTexts[assistantTexts.length - 1])).slice(0, 500);
+  }
+
+  const lastAssistantContent = Array.isArray(event?.lastAssistant?.content) ? event.lastAssistant.content : [];
+  for (let i = lastAssistantContent.length - 1; i >= 0; i -= 1) {
+    const item = lastAssistantContent[i];
+    if (item?.type === "text" && typeof item?.text === "string" && item.text.trim().length > 0) {
+      return sanitizePayload(item.text).slice(0, 500);
+    }
+  }
+
+  return undefined;
 }
 
 export default function registerPlugin(api: OpenClawPluginApi) {
@@ -176,10 +277,22 @@ export default function registerPlugin(api: OpenClawPluginApi) {
   })));
   logs.setGlobalLoggerProvider(loggerProvider);
   const otelLogger = logs.getLogger("clawo11y-plugin");
-
+  
   api.logger.info(`[ClawO11y] OpenTelemetry plugin registered. Exporting Traces, Metrics, Logs to ${endpoint}`);
 
   // --- HOOKS IMPLEMENTATION ---
+
+  const summarizeDebugValue = (value: unknown): unknown => {
+    if (value === undefined || value === null) return value;
+    if (typeof value === "string") return sanitizePayload(value);
+    if (typeof value === "number" || typeof value === "boolean") return value;
+    if (Array.isArray(value)) return value.slice(0, 12).map(summarizeDebugValue);
+    if (typeof value === "object") {
+      const entries = Object.entries(value as Record<string, unknown>).slice(0, 20);
+      return Object.fromEntries(entries.map(([key, entryValue]) => [key, summarizeDebugValue(entryValue)]));
+    }
+    return String(value);
+  };
 
   const resolveSessionKey = (...candidates: any[]): string | undefined => {
     for (const candidate of candidates) {
@@ -314,10 +427,55 @@ export default function registerPlugin(api: OpenClawPluginApi) {
     return undefined;
   };
 
+  const collectStructuredCandidates = (value: any): any[] => {
+    const queue = [parseStructuredValue(value)];
+    const seen = new Set<any>();
+    const results: any[] = [];
+
+    while (queue.length > 0) {
+      const candidate = queue.shift();
+      if (!candidate || typeof candidate !== "object" || seen.has(candidate)) continue;
+      seen.add(candidate);
+      results.push(candidate);
+
+      const nestedValues = [
+        (candidate as any).details,
+        (candidate as any).result,
+        (candidate as any).data,
+        (candidate as any).session,
+        (candidate as any).child,
+      ];
+
+      for (const nested of nestedValues) {
+        const parsed = parseStructuredValue(nested);
+        if (parsed && typeof parsed === "object") queue.push(parsed);
+      }
+
+      if (Array.isArray((candidate as any).content)) {
+        for (const item of (candidate as any).content) {
+          const parsed = parseStructuredValue(item?.text);
+          if (parsed && typeof parsed === "object") queue.push(parsed);
+          const parsedItem = parseStructuredValue(item);
+          if (parsedItem && typeof parsedItem === "object") queue.push(parsedItem);
+        }
+      }
+    }
+
+    return results;
+  };
+
   const extractSessionsSpawnLink = (event: any) => {
     const resultObject = parseStructuredValue(event?.result);
+    const resultCandidates = collectStructuredCandidates(event?.result);
     const paramsObject = parseStructuredValue(event?.params) || event?.params;
-    const childSessionKey = resolveFromPaths(resultObject, [
+    const resolveAcrossCandidates = (paths: string[][]): string | undefined => {
+      for (const candidate of resultCandidates) {
+        const resolved = resolveFromPaths(candidate, paths);
+        if (resolved) return resolved;
+      }
+      return undefined;
+    };
+    const childSessionKey = resolveAcrossCandidates([
       ["childSessionKey"],
       ["targetSessionKey"],
       ["sessionKey"],
@@ -327,7 +485,7 @@ export default function registerPlugin(api: OpenClawPluginApi) {
       ["result", "childSessionKey"],
       ["result", "targetSessionKey"],
     ]);
-    const runId = resolveFromPaths(resultObject, [
+    const runId = resolveAcrossCandidates([
       ["runId"],
       ["sessionId"],
       ["session", "id"],
@@ -336,16 +494,16 @@ export default function registerPlugin(api: OpenClawPluginApi) {
       ["result", "sessionId"],
     ]);
     const agentId = resolveString(
-      resolveFromPaths(resultObject, [["agentId"], ["child", "agentId"], ["result", "agentId"]]),
+      resolveAcrossCandidates([["agentId"], ["child", "agentId"], ["result", "agentId"]]),
       paramsObject?.agentId,
     );
     const label = resolveString(
-      resolveFromPaths(resultObject, [["label"], ["child", "label"], ["result", "label"]]),
+      resolveAcrossCandidates([["label"], ["child", "label"], ["result", "label"]]),
       paramsObject?.label,
       agentId,
     );
     const mode = resolveString(
-      resolveFromPaths(resultObject, [["mode"], ["result", "mode"]]),
+      resolveAcrossCandidates([["mode"], ["result", "mode"]]),
       paramsObject?.mode,
       paramsObject?.thread ? "session" : undefined,
       "run",
@@ -542,6 +700,18 @@ export default function registerPlugin(api: OpenClawPluginApi) {
     pendingSessionAttributes.set(sessionKey, existing);
   };
 
+  const getClosedSessionLineage = (sessionKey: string) => {
+    const snapshot = closedSessionLineage.get(sessionKey);
+    if (!snapshot) {
+      return undefined;
+    }
+    if (Date.now() - snapshot.closedAtMs > 30 * 60 * 1000) {
+      closedSessionLineage.delete(sessionKey);
+      return undefined;
+    }
+    return snapshot;
+  };
+
   const flushMetricsSoon = (delayMs: number = 250) => {
     if (metricFlushTimer) clearTimeout(metricFlushTimer);
     metricFlushTimer = setTimeout(async () => {
@@ -561,6 +731,8 @@ export default function registerPlugin(api: OpenClawPluginApi) {
     const existing = sessionRunStats.get(sessionKey);
     if (existing) return existing;
     const stats: SessionRunStats = {
+      runLineageId: randomUUID(),
+      rootRunLineageId: "",
       startedAtMs: Date.now(),
       lastActivityMs: Date.now(),
       llmCalls: 0,
@@ -572,13 +744,14 @@ export default function registerPlugin(api: OpenClawPluginApi) {
       rootRecreateCount: 0,
       highRiskToolCalls: 0,
     };
+    stats.rootRunLineageId = stats.runLineageId;
     sessionRunStats.set(sessionKey, stats);
     return stats;
   };
 
   const updateSessionStats = (sessionKey: string, patch: Partial<SessionRunStats>) => {
     const stats = getOrCreateSessionStats(sessionKey);
-    Object.assign(stats, patch);
+    Object.assign(stats, Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)));
     stats.lastActivityMs = Date.now();
     return stats;
   };
@@ -596,11 +769,15 @@ export default function registerPlugin(api: OpenClawPluginApi) {
     const stats = sessionRunStats.get(sessionKey);
     if (!span || !stats) return;
     setSpanAttributes(span, {
+      run_lineage_id: stats.runLineageId,
+      root_run_lineage_id: stats.rootRunLineageId,
+      parent_run_lineage_id: stats.parentRunLineageId,
+      run_relation_source: stats.runRelationSource,
       agent_name: stats.agentName,
       channel: stats.channel,
-      llm_call_count: stats.llmCalls,
-      tool_call_count: stats.toolCalls,
-      subagent_call_count: stats.subagentCalls,
+      run_llm_call_count: stats.llmCalls,
+      run_tool_call_count: stats.toolCalls,
+      run_subagent_call_count: stats.subagentCalls,
       total_tokens: stats.totalTokens,
       total_cost_usd: Number(stats.totalCostUsd.toFixed(6)),
       run_status: stats.hadError ? "error" : "ok",
@@ -608,7 +785,7 @@ export default function registerPlugin(api: OpenClawPluginApi) {
       error: stats.errorMessage,
       last_model: stats.lastModel,
       last_provider: stats.lastProvider,
-      root_recreate_count: stats.rootRecreateCount,
+      run_recreate_count: stats.rootRecreateCount,
       high_risk_tool_calls: stats.highRiskToolCalls,
     });
   };
@@ -630,10 +807,13 @@ export default function registerPlugin(api: OpenClawPluginApi) {
     }
     const span = activeSpans.get(`root_${sessionKey}`);
     const stats = sessionRunStats.get(sessionKey);
+    const activeSubagentChildren = Array.from(activeSubagentParents.entries())
+      .filter(([, parent]) => parent === sessionKey)
+      .map(([child]) => child);
     if (!span) {
       recordTelemetryAnomaly("run.close_without_root", `Attempted to close missing root span for session ${sessionKey}`, {
         session_id: sessionKey,
-        close_reason: reason,
+        run_close_reason: reason,
       });
       pendingSessionAttributes.delete(sessionKey);
       sessionRunStats.delete(sessionKey);
@@ -647,23 +827,23 @@ export default function registerPlugin(api: OpenClawPluginApi) {
         error: stats.errorMessage,
         total_tokens: stats.totalTokens,
         total_cost_usd: Number(stats.totalCostUsd.toFixed(6)),
-        llm_call_count: stats.llmCalls,
-        tool_call_count: stats.toolCalls,
-        subagent_call_count: stats.subagentCalls,
+        run_llm_call_count: stats.llmCalls,
+        run_tool_call_count: stats.toolCalls,
+        run_subagent_call_count: stats.subagentCalls,
         high_risk_tool_calls: stats.highRiskToolCalls,
         duration_ms: durationMs,
         channel: stats.channel,
         agent_name: stats.agentName,
       });
     }
-    span.setAttribute("root_close_reason", reason);
+    span.setAttribute("run_close_reason", reason);
     if (reason === "idle_timeout") {
       recordTelemetryAnomaly("trace.root.closed_idle_timeout", `Root span closed by idle timeout for session ${sessionKey}`, {
         session_id: sessionKey,
         duration_ms: durationMs,
-        llm_calls: stats?.llmCalls ?? 0,
-        tool_calls: stats?.toolCalls ?? 0,
-        subagent_calls: stats?.subagentCalls ?? 0,
+        run_llm_calls: stats?.llmCalls ?? 0,
+        run_tool_calls: stats?.toolCalls ?? 0,
+        run_subagent_calls: stats?.subagentCalls ?? 0,
       }, SeverityNumber.WARN, "WARN", span);
     }
     emitLog(
@@ -673,12 +853,15 @@ export default function registerPlugin(api: OpenClawPluginApi) {
       `Run finished for session ${sessionKey} (${stats?.hadError ? "error" : "ok"})`,
       {
         session_id: sessionKey,
+        run_lineage_id: stats?.runLineageId,
+        root_run_lineage_id: stats?.rootRunLineageId,
+        parent_run_lineage_id: stats?.parentRunLineageId,
         duration_ms: durationMs,
-        result: stats?.hadError ? "error" : "ok",
-        close_reason: reason,
-        llm_calls: stats?.llmCalls ?? 0,
-        tool_calls: stats?.toolCalls ?? 0,
-        subagent_calls: stats?.subagentCalls ?? 0,
+        run_status: stats?.hadError ? "error" : "ok",
+        run_close_reason: reason,
+        run_llm_calls: stats?.llmCalls ?? 0,
+        run_tool_calls: stats?.toolCalls ?? 0,
+        run_subagent_calls: stats?.subagentCalls ?? 0,
         high_risk_tool_calls: stats?.highRiskToolCalls ?? 0,
         total_tokens: stats?.totalTokens ?? 0,
         total_cost_usd: Number((stats?.totalCostUsd ?? 0).toFixed(6)),
@@ -699,6 +882,12 @@ export default function registerPlugin(api: OpenClawPluginApi) {
       runCounter.add(1, runMetricAttrs);
       runDuration.record(durationMs, runMetricAttrs);
       flushMetricsSoon();
+      closedSessionLineage.set(sessionKey, {
+        runLineageId: stats.runLineageId,
+        rootRunLineageId: stats.rootRunLineageId,
+        closedAtMs: Date.now(),
+        hadActiveSubagentsOnClose: activeSubagentChildren.length > 0,
+      });
     }
     span.end();
     activeSpans.delete(`root_${sessionKey}`);
@@ -710,6 +899,7 @@ export default function registerPlugin(api: OpenClawPluginApi) {
 
   const touchRootSpan = (sessionKey?: string) => {
     if (!sessionKey || rootIdleTimeoutMs <= 0) return;
+    if (!activeSpans.get(`root_${sessionKey}`)) return;
     const stats = sessionRunStats.get(sessionKey);
     if (stats) stats.lastActivityMs = Date.now();
     const existingTimer = rootIdleTimers.get(sessionKey);
@@ -736,19 +926,54 @@ export default function registerPlugin(api: OpenClawPluginApi) {
         stats.rootRecreateCount += 1;
         recordTelemetryAnomaly("trace.root.recreated", `Root span recreated for session ${sessionKey} from ${createIfMissing}`, {
           session_id: sessionKey,
-          trigger: createIfMissing,
-          root_recreate_count: stats.rootRecreateCount,
+        run_trigger: createIfMissing,
+        run_recreate_count: stats.rootRecreateCount,
         });
       }
       const parentSessionKey = activeSubagentParents.get(sessionKey);
+      const subagentPrimaryKey = activeSubagentPrimaryKeys.get(sessionKey) || sessionKey;
+      const subagentMeta = activeSubagentMetadata.get(subagentPrimaryKey);
+      const parentStats = parentSessionKey ? sessionRunStats.get(parentSessionKey) : undefined;
+      let lineageDecision = "fresh_root";
+      if (!stats.runTrigger) stats.runTrigger = createIfMissing;
+      if (parentStats) {
+        stats.parentRunLineageId = parentStats.runLineageId;
+        stats.rootRunLineageId = parentStats.rootRunLineageId || parentStats.runLineageId;
+        stats.runRelationSource = activeSubagentSources.get(activeSubagentPrimaryKeys.get(sessionKey) || sessionKey) || "subagent";
+        lineageDecision = "parent_stats";
+      } else if (parentSessionKey && (subagentMeta?.parentRunLineageId || subagentMeta?.rootRunLineageId)) {
+        stats.parentRunLineageId = subagentMeta?.parentRunLineageId;
+        stats.rootRunLineageId = subagentMeta?.rootRunLineageId || subagentMeta?.parentRunLineageId || stats.runLineageId;
+        stats.runRelationSource = activeSubagentSources.get(subagentPrimaryKey) || "subagent";
+        lineageDecision = "subagent_metadata";
+      } else if (createIfMissing !== "inbound_claim") {
+        const priorLineage = getClosedSessionLineage(sessionKey);
+        if (priorLineage?.hadActiveSubagentsOnClose) {
+          stats.parentRunLineageId = priorLineage.runLineageId;
+          stats.rootRunLineageId = priorLineage.rootRunLineageId || priorLineage.runLineageId || stats.runLineageId;
+          stats.runRelationSource = "session_continuation";
+          lineageDecision = "session_continuation";
+        } else {
+          stats.rootRunLineageId = stats.runLineageId;
+          stats.runRelationSource = undefined;
+          lineageDecision = priorLineage ? "fresh_root_closed_lineage_not_continuable" : "fresh_root_no_closed_lineage";
+        }
+      } else {
+        stats.rootRunLineageId = stats.runLineageId;
+        stats.runRelationSource = undefined;
+        lineageDecision = "fresh_inbound_root";
+      }
       const parentCtx = getParentContextForNewRoot(sessionKey);
       rootSpan = tracer.startSpan(`command.process`, undefined, parentCtx);
       setSpanAttributes(rootSpan, {
         session_id: sessionKey,
-        command_trigger: createIfMissing,
+        run_lineage_id: stats.runLineageId,
+        root_run_lineage_id: stats.rootRunLineageId,
+        parent_run_lineage_id: stats.parentRunLineageId,
+        run_trigger: stats.runTrigger,
         channel: stats.channel,
         agent_name: stats.agentName,
-        root_recreate_count: stats.rootRecreateCount,
+        run_recreate_count: stats.rootRecreateCount,
         "subagent.parent_session_key": parentSessionKey,
         "subagent.inherited_trace": Boolean(parentSessionKey),
       });
@@ -780,8 +1005,13 @@ export default function registerPlugin(api: OpenClawPluginApi) {
      activeTimers.set(`root_${sessionKey}`, Date.now());
      
      // Emit a Log event
-     emitLog(SeverityNumber.INFO, "INFO", "run.started", `Starting new command process for session: ${sessionKey}`, {
+    emitLog(SeverityNumber.INFO, "INFO", "run.started", `Starting new run for session: ${sessionKey}`, {
        session_id: sessionKey,
+       run_lineage_id: stats?.runLineageId,
+       root_run_lineage_id: stats?.rootRunLineageId,
+       parent_run_lineage_id: stats?.parentRunLineageId,
+        run_relation_source: stats?.runRelationSource,
+       run_trigger: stats?.runTrigger,
        agent_name: stats?.agentName,
        channel: stats?.channel,
        user_message: pendingSessionAttributes.get(sessionKey)?.user_message,
@@ -798,7 +1028,7 @@ export default function registerPlugin(api: OpenClawPluginApi) {
        agentCtx?.sessionId,
      );
      if (sessionKey && !activeSpans.get(`root_${sessionKey}`)) {
-       recordTelemetryAnomaly("run.agent_end_without_root", `agent_end received without active root span for session ${sessionKey}`, {
+      recordTelemetryAnomaly("turn.agent_end_without_root", `agent_end received without active root span for session ${sessionKey}`, {
          session_id: sessionKey,
        });
      }
@@ -819,6 +1049,11 @@ export default function registerPlugin(api: OpenClawPluginApi) {
       agentName: resolveString(event.agentName, event.agent_name, agentCtx?.agentName, agentCtx?.agent_name),
       lastModel: resolveString(event.model),
       lastProvider: resolveString(event.provider),
+    });
+    attachSessionAttributes(sessionKey, {
+      run_id: resolveString(event?.runId, agentCtx?.runId),
+      message_provider: resolveString(event?.messageProvider),
+      run_trigger: resolveString(event?.trigger),
     });
     const ctx = getTraceContext(sessionKey, "llm_input");
     const span = tracer.startSpan(`llm.completion: ${event.model || 'unknown'}`, undefined, ctx);
@@ -874,6 +1109,12 @@ export default function registerPlugin(api: OpenClawPluginApi) {
       lastModel: resolveString(event.model),
       lastProvider: resolveString(event.provider),
     });
+    attachSessionAttributes(sessionKey, {
+      run_id: resolveString(event?.runId, agentCtx?.runId),
+      message_provider: resolveString(event?.messageProvider),
+      run_trigger: resolveString(event?.trigger),
+      assistant_preview: extractAssistantPreview(event),
+    });
     
     if (!span) {
       recordTelemetryAnomaly("llm.orphaned_output", `llm_output received without active llm span for session ${sessionKey}`, {
@@ -886,35 +1127,36 @@ export default function registerPlugin(api: OpenClawPluginApi) {
 
     if (span) {
       if (durationMs > 0) span.setAttribute("duration_ms", durationMs);
-      if (event.usage) {
-        const pTokens = event.usage.prompt_tokens || 0;
-        const cTokens = event.usage.completion_tokens || 0;
-        const total = pTokens + cTokens;
-        
-        // Fetch user-defined pricing config from OpenClaw
-        const customPricing = getConfig("pricing", {});
-        const cost = calculateCost(event.model, pTokens, cTokens, customPricing);
-        
+      const customPricing = getConfig("pricing", {});
+      const usage = extractLlmUsage(event, customPricing);
+      const llmMetricAttrs = {
+        model: resolveString(event.model, stats.lastModel) || "unknown",
+        provider: resolveString(event.provider, stats.lastProvider) || "unknown",
+      };
+      if (usage) {
         // Trace Attributes
-        span.setAttribute("prompt_tokens", pTokens);
-        span.setAttribute("completion_tokens", cTokens);
-        span.setAttribute("total_tokens", total);
-        span.setAttribute("cost_usd", cost);
-        span.setAttribute("usage.has_tokens", total > 0);
+        span.setAttribute("prompt_tokens", usage.promptTokens);
+        span.setAttribute("completion_tokens", usage.completionTokens);
+        span.setAttribute("cache_read_tokens", usage.cacheReadTokens);
+        span.setAttribute("cache_write_tokens", usage.cacheWriteTokens);
+        span.setAttribute("total_tokens", usage.totalTokens);
+        span.setAttribute("cost_usd", usage.costUsd);
+        span.setAttribute("cost_input_usd", usage.costInputUsd);
+        span.setAttribute("cost_output_usd", usage.costOutputUsd);
+        span.setAttribute("cost_cache_read_usd", usage.costCacheReadUsd);
+        span.setAttribute("cost_cache_write_usd", usage.costCacheWriteUsd);
+        span.setAttribute("usage_source", usage.source);
+        span.setAttribute("usage.has_tokens", usage.totalTokens > 0);
         if (durationMs > 0) span.setAttribute("duration_ms", durationMs);
 
         // Record Metrics
-        const metricAttrs = { model: event.model, provider: event.provider };
-        tokenCounter.add(total, metricAttrs);
-        costCounter.add(cost, metricAttrs);
+        tokenCounter.add(usage.totalTokens, llmMetricAttrs);
+        costCounter.add(usage.costUsd, llmMetricAttrs);
         if (durationMs > 0) {
-          llmDuration.record(durationMs, {
-            model: event.model || "unknown",
-            provider: event.provider || "unknown",
-          });
+          llmDuration.record(durationMs, llmMetricAttrs);
         }
-        stats.totalTokens += total;
-        stats.totalCostUsd += cost;
+        stats.totalTokens += usage.totalTokens;
+        stats.totalCostUsd += usage.costUsd;
         flushMetricsSoon();
       }
       if (event?.error) {
@@ -951,10 +1193,13 @@ export default function registerPlugin(api: OpenClawPluginApi) {
           model: event.model,
           provider: event.provider,
           duration_ms: durationMs,
-          prompt_tokens: event.usage?.prompt_tokens || 0,
-          completion_tokens: event.usage?.completion_tokens || 0,
-          total_tokens: event.usage ? (event.usage.prompt_tokens || 0) + (event.usage.completion_tokens || 0) : 0,
-          cost_usd: event.usage ? Number(calculateCost(event.model, event.usage.prompt_tokens || 0, event.usage.completion_tokens || 0, getConfig("pricing", {})).toFixed(6)) : undefined,
+          prompt_tokens: usage?.promptTokens || 0,
+          completion_tokens: usage?.completionTokens || 0,
+          cache_read_tokens: usage?.cacheReadTokens || 0,
+          cache_write_tokens: usage?.cacheWriteTokens || 0,
+          total_tokens: usage?.totalTokens || 0,
+          cost_usd: usage ? Number(usage.costUsd.toFixed(6)) : undefined,
+          usage_source: usage?.source,
           agent_name: stats.agentName,
           channel: stats.channel,
         }, span);
@@ -1155,6 +1400,8 @@ export default function registerPlugin(api: OpenClawPluginApi) {
             const fallbackSpan = tracer.startSpan(`subagent:${subagentLabel}`, undefined, parentCtx);
             setSpanAttributes(fallbackSpan, {
               session_id: sessionKey,
+              "subagent.parent_run_lineage_id": stats.runLineageId,
+              "subagent.root_run_lineage_id": stats.rootRunLineageId,
               "subagent.child_session_key": spawnInfo.childSessionKey,
               "subagent.run_id": spawnInfo.runId,
               "subagent.label": subagentLabel,
@@ -1168,6 +1415,8 @@ export default function registerPlugin(api: OpenClawPluginApi) {
               label: subagentLabel,
               agentId: subagentAgentId,
               mode: subagentMode,
+              parentRunLineageId: stats.runLineageId,
+              rootRunLineageId: stats.rootRunLineageId,
             });
             registerSubagentAliases(
               spawnInfo.childSessionKey,
@@ -1226,6 +1475,8 @@ export default function registerPlugin(api: OpenClawPluginApi) {
     );
     setSpanAttributes(span, {
       session_id: requesterSessionKey,
+      "subagent.parent_run_lineage_id": stats.runLineageId,
+      "subagent.root_run_lineage_id": stats.rootRunLineageId,
       "subagent.child_session_key": childSessionKey,
       "subagent.agent_id": event?.agentId ? String(event.agentId) : undefined,
       "subagent.label": event?.label ? String(event.label) : undefined,
@@ -1237,6 +1488,8 @@ export default function registerPlugin(api: OpenClawPluginApi) {
       label: resolveString(event?.label, event?.agentId ? String(event.agentId) : undefined),
       agentId: resolveString(event?.agentId ? String(event.agentId) : undefined),
       mode: resolveString(event?.mode),
+      parentRunLineageId: stats.runLineageId,
+      rootRunLineageId: stats.rootRunLineageId,
     });
     registerSubagentAliases(
       childSessionKey,
@@ -1315,7 +1568,8 @@ export default function registerPlugin(api: OpenClawPluginApi) {
     const startedAt = activeTimers.get(`subagent_${childSessionKey}`);
     const durationMs = startedAt ? Math.max(0, Date.now() - startedAt) : 0;
     if (startedAt) activeTimers.delete(`subagent_${childSessionKey}`);
-    const stats = parentSessionKey ? updateSessionStats(parentSessionKey, {}) : undefined;
+    const stats = parentSessionKey ? sessionRunStats.get(parentSessionKey) : undefined;
+    if (stats) stats.lastActivityMs = Date.now();
     if (event?.error) {
       const errMsg = event.error.message || String(event.error);
       span.setStatus({ code: SpanStatusCode.ERROR, message: errMsg });
@@ -1378,11 +1632,15 @@ export default function registerPlugin(api: OpenClawPluginApi) {
      );
      if (sessionKey) {
        registerSessionAliases(sessionKey, agentCtx?.sessionKey, event?.sessionKey, agentCtx?.sessionId, event?.sessionId);
-       updateSessionStats(sessionKey, {
-         channel: resolveString(event?.channel, agentCtx?.channel),
-         agentName: resolveString(event?.agentName, event?.agent_name, agentCtx?.agentName, agentCtx?.agent_name),
-       });
-       touchRootSpan(sessionKey);
+       const stats = sessionRunStats.get(sessionKey);
+       if (stats) {
+         Object.assign(stats, {
+           channel: resolveString(event?.channel, agentCtx?.channel) || stats.channel,
+           agentName: resolveString(event?.agentName, event?.agent_name, agentCtx?.agentName, agentCtx?.agent_name) || stats.agentName,
+         });
+         stats.lastActivityMs = Date.now();
+         touchRootSpan(sessionKey);
+       }
        attachSessionAttributes(sessionKey, {
          user_message: sanitizePayload(event.message),
          user_message_len: typeof event.message === "string" ? event.message.length : 0
@@ -1393,5 +1651,11 @@ export default function registerPlugin(api: OpenClawPluginApi) {
        channel: resolveString(event?.channel, agentCtx?.channel),
        agent_name: resolveString(event?.agentName, event?.agent_name, agentCtx?.agentName, agentCtx?.agent_name),
      });
+  });
+
+  api.on("session_start", (event: any, agentCtx?: any) => {
+  });
+
+  api.on("session_end", (event: any, agentCtx?: any) => {
   });
 }

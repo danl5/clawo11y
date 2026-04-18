@@ -225,18 +225,21 @@ func GetCostDashboard(c *gin.Context) {
 	}
 
 	type TopRun struct {
-		TraceID       string    `json:"trace_id"`
-		SessionID     string    `json:"session_id"`
-		UserMessage   string    `json:"user_message"`
-		Status        string    `json:"status"`
-		DurationMs    float64   `json:"duration_ms"`
-		TotalCostUsd  float64   `json:"total_cost_usd"`
-		TotalTokens   int       `json:"total_tokens"`
-		LLMCalls      int       `json:"llm_calls"`
-		ToolCalls     int       `json:"tool_calls"`
-		SubagentCalls int       `json:"subagent_calls"`
-		LastModel     string    `json:"last_model"`
-		CreatedAt     time.Time `json:"created_at"`
+		TraceID            string    `json:"trace_id"`
+		SessionID          string    `json:"session_id"`
+		RunLineageID       string    `json:"run_lineage_id"`
+		ParentRunLineageID string    `json:"parent_run_lineage_id"`
+		RootRunLineageID   string    `json:"root_run_lineage_id"`
+		UserMessage        string    `json:"user_message"`
+		Status             string    `json:"status"`
+		DurationMs         float64   `json:"duration_ms"`
+		TotalCostUsd       float64   `json:"total_cost_usd"`
+		TotalTokens        int       `json:"total_tokens"`
+		LLMCalls           int       `json:"llm_calls"`
+		ToolCalls          int       `json:"tool_calls"`
+		SubagentCalls      int       `json:"subagent_calls"`
+		LastModel          string    `json:"last_model"`
+		CreatedAt          time.Time `json:"created_at"`
 	}
 
 	var rootSpans []models.OtelSpan
@@ -253,18 +256,21 @@ func GetCostDashboard(c *gin.Context) {
 	for _, span := range rootSpans {
 		attrs := parseJSONMap(span.Attributes)
 		run := TopRun{
-			TraceID:       span.TraceID,
-			SessionID:     getStringAttr(attrs, "session_id"),
-			UserMessage:   getStringAttr(attrs, "user_message"),
-			Status:        getStringAttr(attrs, "run_status"),
-			DurationMs:    getFloatAttr(attrs, "duration_ms"),
-			TotalCostUsd:  getFloatAttr(attrs, "total_cost_usd"),
-			TotalTokens:   getIntAttr(attrs, "total_tokens"),
-			LLMCalls:      getIntAttr(attrs, "llm_call_count"),
-			ToolCalls:     getIntAttr(attrs, "tool_call_count"),
-			SubagentCalls: getIntAttr(attrs, "subagent_call_count"),
-			LastModel:     getStringAttr(attrs, "last_model"),
-			CreatedAt:     span.CreatedAt,
+			TraceID:            span.TraceID,
+			SessionID:          getStringAttr(attrs, "session_id"),
+			RunLineageID:       getStringAttr(attrs, "run_lineage_id"),
+			ParentRunLineageID: getStringAttr(attrs, "parent_run_lineage_id"),
+			RootRunLineageID:   getStringAttr(attrs, "root_run_lineage_id"),
+			UserMessage:        getStringAttr(attrs, "user_message"),
+			Status:             getStringAttr(attrs, "run_status"),
+			DurationMs:         getFloatAttr(attrs, "duration_ms"),
+			TotalCostUsd:       getFloatAttr(attrs, "total_cost_usd"),
+			TotalTokens:        getIntAttr(attrs, "total_tokens"),
+			LLMCalls:           getIntAttr(attrs, "run_llm_call_count"),
+			ToolCalls:          getIntAttr(attrs, "run_tool_call_count"),
+			SubagentCalls:      getIntAttr(attrs, "run_subagent_call_count"),
+			LastModel:          getStringAttr(attrs, "last_model"),
+			CreatedAt:          span.CreatedAt,
 		}
 		if run.Status == "" {
 			if span.StatusCode == 2 {
@@ -439,6 +445,41 @@ func GetRecentTraces(c *gin.Context) {
 	c.JSON(200, spans)
 }
 
+// GetRelatedRuns returns root traces that belong to the same lineage root.
+func GetRelatedRuns(c *gin.Context) {
+	rootRunLineageID := strings.TrimSpace(c.Param("root_run_lineage_id"))
+	if rootRunLineageID == "" {
+		c.JSON(400, gin.H{"error": "root_run_lineage_id is required"})
+		return
+	}
+
+	var spans []models.OtelSpan
+	err := database.DB.Where("parent_span_id = ''").
+		Order("created_at ASC").
+		Find(&spans).Error
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to fetch related runs"})
+		return
+	}
+
+	relatedRuns := make([]models.OtelSpan, 0)
+	for _, span := range spans {
+		attrs := parseJSONMap(span.Attributes)
+		spanRootRunLineageID := getStringAttr(attrs, "root_run_lineage_id")
+		spanRunLineageID := getStringAttr(attrs, "run_lineage_id")
+		if spanRootRunLineageID == rootRunLineageID || (spanRootRunLineageID == "" && spanRunLineageID == rootRunLineageID) {
+			relatedRuns = append(relatedRuns, span)
+		}
+	}
+
+	if len(relatedRuns) == 0 {
+		c.JSON(404, gin.H{"error": "Related runs not found"})
+		return
+	}
+
+	c.JSON(200, relatedRuns)
+}
+
 // GetMetricsDashboard returns recent metric data points grouped by metric name
 func GetMetricsDashboard(c *gin.Context) {
 	cutoffDate := time.Now().Add(-1 * time.Hour) // Last 1 hour of metrics
@@ -507,7 +548,7 @@ func GetRecentLogs(c *gin.Context) {
 	c.JSON(200, logs)
 }
 
-// GetOtelOverview returns business-oriented aggregates for runs, models, tools, subagents, and logs.
+// GetOtelOverview returns business-oriented aggregates for turns, models, tools, subagents, and logs.
 func GetOtelOverview(c *gin.Context) {
 	cutoffDate := time.Now().Add(-24 * time.Hour)
 
@@ -521,23 +562,26 @@ func GetOtelOverview(c *gin.Context) {
 	}
 
 	type RecentRun struct {
-		TraceID       string    `json:"trace_id"`
-		SessionID     string    `json:"session_id"`
-		Name          string    `json:"name"`
-		UserMessage   string    `json:"user_message"`
-		Status        string    `json:"status"`
-		CloseReason   string    `json:"close_reason"`
-		DurationMs    float64   `json:"duration_ms"`
-		TotalCostUsd  float64   `json:"total_cost_usd"`
-		TotalTokens   int       `json:"total_tokens"`
-		LLMCalls      int       `json:"llm_calls"`
-		ToolCalls     int       `json:"tool_calls"`
-		SubagentCalls int       `json:"subagent_calls"`
-		LastModel     string    `json:"last_model"`
-		LastProvider  string    `json:"last_provider"`
-		ErrorType     string    `json:"error_type"`
-		ErrorMessage  string    `json:"error_message"`
-		CreatedAt     time.Time `json:"created_at"`
+		TraceID            string    `json:"trace_id"`
+		SessionID          string    `json:"session_id"`
+		RunLineageID       string    `json:"run_lineage_id"`
+		ParentRunLineageID string    `json:"parent_run_lineage_id"`
+		RootRunLineageID   string    `json:"root_run_lineage_id"`
+		Name               string    `json:"name"`
+		UserMessage        string    `json:"user_message"`
+		Status             string    `json:"status"`
+		CloseReason        string    `json:"close_reason"`
+		DurationMs         float64   `json:"duration_ms"`
+		TotalCostUsd       float64   `json:"total_cost_usd"`
+		TotalTokens        int       `json:"total_tokens"`
+		LLMCalls           int       `json:"llm_calls"`
+		ToolCalls          int       `json:"tool_calls"`
+		SubagentCalls      int       `json:"subagent_calls"`
+		LastModel          string    `json:"last_model"`
+		LastProvider       string    `json:"last_provider"`
+		ErrorType          string    `json:"error_type"`
+		ErrorMessage       string    `json:"error_message"`
+		CreatedAt          time.Time `json:"created_at"`
 	}
 
 	type ModelBreakdown struct {
@@ -608,23 +652,26 @@ func GetOtelOverview(c *gin.Context) {
 		}
 
 		run := RecentRun{
-			TraceID:       span.TraceID,
-			SessionID:     getStringAttr(attrs, "session_id"),
-			Name:          span.Name,
-			UserMessage:   getStringAttr(attrs, "user_message"),
-			Status:        status,
-			CloseReason:   getStringAttr(attrs, "root_close_reason"),
-			DurationMs:    durationMs,
-			TotalCostUsd:  totalCostUsd,
-			TotalTokens:   totalTokens,
-			LLMCalls:      getIntAttr(attrs, "llm_call_count"),
-			ToolCalls:     getIntAttr(attrs, "tool_call_count"),
-			SubagentCalls: getIntAttr(attrs, "subagent_call_count"),
-			LastModel:     getStringAttr(attrs, "last_model"),
-			LastProvider:  getStringAttr(attrs, "last_provider"),
-			ErrorType:     getStringAttr(attrs, "error_type"),
-			ErrorMessage:  getStringAttr(attrs, "error"),
-			CreatedAt:     span.CreatedAt,
+			TraceID:            span.TraceID,
+			SessionID:          getStringAttr(attrs, "session_id"),
+			RunLineageID:       getStringAttr(attrs, "run_lineage_id"),
+			ParentRunLineageID: getStringAttr(attrs, "parent_run_lineage_id"),
+			RootRunLineageID:   getStringAttr(attrs, "root_run_lineage_id"),
+			Name:               span.Name,
+			UserMessage:        getStringAttr(attrs, "user_message"),
+			Status:             status,
+			CloseReason:        getStringAttr(attrs, "run_close_reason"),
+			DurationMs:         durationMs,
+			TotalCostUsd:       totalCostUsd,
+			TotalTokens:        totalTokens,
+			LLMCalls:           getIntAttr(attrs, "run_llm_call_count"),
+			ToolCalls:          getIntAttr(attrs, "run_tool_call_count"),
+			SubagentCalls:      getIntAttr(attrs, "run_subagent_call_count"),
+			LastModel:          getStringAttr(attrs, "last_model"),
+			LastProvider:       getStringAttr(attrs, "last_provider"),
+			ErrorType:          getStringAttr(attrs, "error_type"),
+			ErrorMessage:       getStringAttr(attrs, "error"),
+			CreatedAt:          span.CreatedAt,
 		}
 		recentRuns = append(recentRuns, run)
 
@@ -1051,7 +1098,7 @@ func GetOtelContextBloat(c *gin.Context) {
 		RunStatus          string         `json:"run_status"`
 		UserMessage        string         `json:"user_message"`
 		Points             []SessionPoint `json:"points"`
-		Turns              int            `json:"turns"`
+		RunsObserved       int            `json:"runs_observed"`
 		MaxPromptTokens    int            `json:"max_prompt_tokens"`
 		LatestPromptTokens int            `json:"latest_prompt_tokens"`
 		GrowthRatio        float64        `json:"growth_ratio"`
@@ -1162,7 +1209,7 @@ func GetOtelContextBloat(c *gin.Context) {
 			RunStatus:          getStringAttr(rootAttrs, "run_status"),
 			UserMessage:        getStringAttr(rootAttrs, "user_message"),
 			Points:             points,
-			Turns:              len(points),
+			RunsObserved:       len(points),
 			MaxPromptTokens:    maxPrompt,
 			LatestPromptTokens: last.PromptTokens,
 			GrowthRatio:        growthRatio,

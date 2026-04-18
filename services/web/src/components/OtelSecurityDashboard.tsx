@@ -161,7 +161,7 @@ export function OtelSecurityDashboard() {
         </div>
       </div>
 
-      <div className="glass-card overflow-x-auto p-5">
+      <div className="glass-card scrollbar-thin overflow-x-auto p-5">
         <div className="mb-4">
           <h3 className="text-sm font-medium text-white/80">Audit Timeline</h3>
           <p className="mt-1 text-xs text-white/40">Most recent risky operations, with enough context for review and incident response.</p>

@@ -35,6 +35,9 @@ interface ProviderStats {
 interface TopRun {
   trace_id: string;
   session_id: string;
+  run_lineage_id: string;
+  parent_run_lineage_id: string;
+  root_run_lineage_id: string;
   user_message: string;
   status: string;
   duration_ms: number;
@@ -84,7 +87,7 @@ interface ContextBloatCandidate {
   run_status: string;
   user_message: string;
   points: ContextBloatPoint[];
-  turns: number;
+  runs_observed: number;
   max_prompt_tokens: number;
   latest_prompt_tokens: number;
   growth_ratio: number;
@@ -327,8 +330,8 @@ export function OtelCostDashboard() {
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
-        <div className="glass-card p-5 xl:col-span-2">
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
+        <div className="glass-card min-w-0 overflow-hidden p-5 xl:col-span-2">
           <h3 className="mb-1 text-sm font-medium text-white/75">Global Cost Dashboard</h3>
           <p className="mb-4 text-xs text-white/40">Stacked provider spend by day. Answers where money goes over time.</p>
           <ResponsiveContainer width="100%" height={300}>
@@ -348,7 +351,7 @@ export function OtelCostDashboard() {
           </ResponsiveContainer>
         </div>
 
-        <div className="glass-card p-5">
+        <div className="glass-card min-w-0 overflow-hidden p-5">
           <h3 className="mb-1 text-sm font-medium text-white/75">Provider Spend</h3>
           <p className="mb-4 text-xs text-white/40">Helps CFO and infra owners spot who is burning budget.</p>
           <div className="space-y-3">
@@ -372,11 +375,11 @@ export function OtelCostDashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
-        <div className="glass-card p-5">
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
+        <div className="glass-card min-w-0 overflow-hidden p-5">
           <h3 className="mb-1 text-sm font-medium text-white/75">Top Expensive Runs</h3>
           <p className="mb-4 text-xs text-white/40">Select a run to inspect where the cost or tokens concentrate.</p>
-          <div className="space-y-2">
+          <div className="scrollbar-thin max-h-[420px] space-y-2 overflow-y-auto pr-2">
             {data.top_runs.map((run) => (
               <button
                 key={run.trace_id}
@@ -384,23 +387,36 @@ export function OtelCostDashboard() {
                 onClick={() => setSelectedTraceId(run.trace_id)}
                 className={`w-full rounded-lg border p-3 text-left transition-colors ${selectedTraceId === run.trace_id ? 'border-orange-500/30 bg-orange-500/10' : 'border-white/10 bg-white/[0.02] hover:bg-white/[0.04]'}`}
               >
-                <div className="mb-1 flex items-start justify-between gap-2">
-                  <div className="min-w-0 text-sm text-white/85">{truncate(run.user_message || run.session_id || run.trace_id, 70)}</div>
-                  <span className="shrink-0 font-mono text-[11px] text-orange-300">{formatCurrency(run.total_cost_usd)}</span>
-                </div>
-                <div className="flex flex-wrap gap-x-3 gap-y-1 font-mono text-[10px] text-white/45">
-                  <span>{new Date(run.created_at).toLocaleTimeString()}</span>
-                  <span>{run.last_model || 'unknown model'}</span>
-                  <span>{formatNumber(run.total_tokens)} tok</span>
-                  <span>{formatDurationMs(run.duration_ms)}</span>
-                  <span>{run.status}</span>
+                <div className="flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div
+                      className="truncate text-sm text-white/85"
+                      title={run.user_message || run.session_id || run.trace_id}
+                    >
+                      {run.user_message || run.session_id || run.trace_id}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 pr-1 font-mono text-[10px] text-white/45">
+                      <span>{new Date(run.created_at).toLocaleTimeString()}</span>
+                      <span className="max-w-[128px] truncate" title={run.last_model || 'unknown model'}>
+                        {run.last_model || 'unknown model'}
+                      </span>
+                      <span>{formatNumber(run.total_tokens)} tok</span>
+                      <span>{formatDurationMs(run.duration_ms)}</span>
+                      <span>{run.status}</span>
+                    </div>
+                  </div>
+                  <div className="min-w-[72px] shrink-0 text-right">
+                    <span className="inline-flex rounded-md border border-orange-500/20 bg-orange-500/10 px-2 py-1 font-mono text-[11px] text-orange-300">
+                      {formatCurrency(run.total_cost_usd)}
+                    </span>
+                  </div>
                 </div>
               </button>
             ))}
           </div>
         </div>
 
-        <div className="glass-card p-5">
+        <div className="glass-card min-w-0 overflow-hidden p-5">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-medium text-white/75">Cost Flame Graph</h3>
@@ -485,8 +501,8 @@ duration: ${formatDurationMs(block.durationMs)}`}
               No candidate session currently exceeds the prompt-growth thresholds.
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-5 xl:grid-cols-[340px_minmax(0,1fr)]">
-              <div className="space-y-2">
+            <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[340px_minmax(0,1fr)]">
+              <div className="scrollbar-thin max-h-[420px] space-y-2 overflow-y-auto pr-2">
                 {contextBloat.candidates.map((candidate) => (
                   <div
                     key={`${candidate.session_id}-${candidate.trace_id}`}
@@ -499,7 +515,7 @@ duration: ${formatDurationMs(block.durationMs)}`}
                       </span>
                     </div>
                     <div className="flex flex-wrap gap-x-3 gap-y-1 font-mono text-[10px] text-white/45">
-                      <span>turns: {candidate.turns}</span>
+                      <span>runs: {candidate.runs_observed}</span>
                       <span>growth: {candidate.growth_ratio.toFixed(2)}x</span>
                       <span>slope: {candidate.growth_slope.toFixed(0)}</span>
                       <span>max: {formatNumber(candidate.max_prompt_tokens)}</span>
@@ -544,7 +560,7 @@ duration: ${formatDurationMs(block.durationMs)}`}
         </div>
       )}
 
-      <div className="glass-card overflow-x-auto p-5">
+      <div className="glass-card scrollbar-thin overflow-x-auto p-5">
         <div className="mb-4">
           <h3 className="text-sm font-medium text-white/75">Tool Reliability Matrix</h3>
           <p className="mt-1 text-xs text-white/40">Prioritizes which tool integrations deserve SRE attention first.</p>
@@ -579,7 +595,7 @@ duration: ${formatDurationMs(block.durationMs)}`}
         </table>
       </div>
 
-      <div className="glass-card overflow-x-auto p-5">
+      <div className="glass-card scrollbar-thin overflow-x-auto p-5">
         <div className="mb-4">
           <h3 className="text-sm font-medium text-white/75">Model Cost Breakdown</h3>
           <p className="mt-1 text-xs text-white/40">Supports FinOps conversations about model routing and provider choice.</p>
